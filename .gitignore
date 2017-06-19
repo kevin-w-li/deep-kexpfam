@@ -2,3 +2,7 @@
 .sw*
 data/*
 *~
+*.swp
+Utils.pyc
+*.pyc
+figs/
