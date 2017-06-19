@@ -46,15 +46,22 @@ def lite_score(X, x, alpha, sigma):
     # print J, J2
     return J
 
+def gaussian_kernel_prime(xi, xj, sigma, W):
+
+def score_prime(X, x, alpha, sigma):
+    
+    I = X.shape[0]
+    J = x.shape[0]
+
+
+
 
 def network(fun,W, X):
-    W = W.reshape(4,5)
     output = fun(W.dot(X))
     return output
 
 def network_prime(fun_prime, W, X):
-    W = W.reshape(4,5)
-    return (fun_prime(W.dot(X))*X.T)
+    return X[:,None,:] * fun_prime(W.dot(X.T)).T[:,:,None]
     
 def model_score(fun, W, X, x, alpha, sigma):
     CX = network(fun, W, X)
@@ -62,16 +69,19 @@ def model_score(fun, W, X, x, alpha, sigma):
     return lite_score(CX, Cx, alpha, sigma)
 
 np.random.seed(53)
-X = np.random.randn(5,1)
-x = np.random.randn(5)
-W = np.random.randn(4,5)
+X = np.random.randn(10,5)
+x = np.random.randn(5,2)
+W = np.random.randn(4,X.shape[1])
 alpha = np.random.rand(100)
 sigma = 2.0
-fun = np.tanh
+
+fun = lambda x: np.tanh(x)
 fun_prime = lambda x: 1-np.tanh(x)**2
 
-print approx_fprime(W.reshape(-1), lambda x: network(fun, x, X), 1e-5)
-print network_prime(fun_prime, W, X)
+net_prime = np.zeros((X.shape[0], W.shape[0], W.shape[1]))
+for i in range(X.shape[0]):
+    for j in range(W.shape[0]):
+        net_prime[i,j,:] +=  approx_fprime(W[j,:], lambda x: network(fun, x, X[i,:]), 1e-8)
+print np.allclose(net_prime, network_prime(fun_prime, W, X))
 
-# print model_score(fun, W, X, x, alpha, sigma)
-# print approx_fprime(x, lambda x: model_score(fun, W, X, x, alpha, sigma), 1e-6)
+
