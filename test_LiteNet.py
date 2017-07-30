@@ -2,15 +2,21 @@ import tensorflow as tf
 from LiteNet import *
 import unittest
 import numpy as np
+import time
 
+# @unittest.skip('')
 class test_LiteNet(unittest.TestCase):
 
 
+    ndim = 4
+    npoint = 3
+    ndata  = 2
+
     def setUp(self):
-        self.kernel = GaussianKernel()
-        self.X = tf.constant(np.random.randn(3,4).astype('float32'))
-        self.Y = tf.constant(np.random.randn(2,4).astype('float32'))
-        self.alpha = tf.constant(np.random.randn(3).astype('float32'))
+        self.kernel = GaussianKernel(self.ndim)
+        self.X = tf.constant(np.random.randn(self.npoint,self.ndim).astype('float32'))
+        self.Y = tf.constant(np.random.randn(self.ndata ,self.ndim).astype('float32'))
+        self.alpha = tf.constant(np.random.randn(self.npoint).astype('float32'))
         self.kernel.set_points(self.X, alpha = self.alpha)
 
         init = tf.global_variables_initializer()
@@ -63,11 +69,13 @@ class test_LiteNet(unittest.TestCase):
             hess_real[vi] = tf.stack(tf.hessians(values[0], this_y)[0]).eval()
         assert np.allclose(hess, hess_real)
 
+# @unittest.skip('')
 class test_LinearNetwork(unittest.TestCase):
     
     ndim_in = (5,)
     ndim_out = 4
     ndata  = 6
+    batch_size = 2
 
     def setUp(self):
         
@@ -76,7 +84,8 @@ class test_LinearNetwork(unittest.TestCase):
         self.data_tensor = tf.constant(self.data)
         
         # build network
-        self.network = LinearNetwork(self.ndim_in, self.ndim_out)
+        self.network = LinearNetwork(self.ndim_in, self.ndim_out, 
+                                     batch_size = self.batch_size)
 
         self.sess = tf.InteractiveSession()
 
@@ -91,8 +100,9 @@ class test_LinearNetwork(unittest.TestCase):
         b = self.network.param['b'].eval()
         data = self.data
         out_real = b + data.dot(W.T)
-        assert np.allclose(out, out_real)
+        assert np.allclose(out, out_real), np.linalg.norm(out-out_real)**2
 
+    # @unittest.skip('not required')
     def test_get_grad_param(self):
         grad_dict, output = self.network.get_grad_param(self.data)
         grad_dict_true = OrderedDict.fromkeys(self.network.param)
@@ -109,6 +119,266 @@ class test_LinearNetwork(unittest.TestCase):
         assert np.allclose(grad_dict_true['b'], grad_dict['b'])
         assert np.allclose(output_true, output)
 
+    def test_get_grad_data(self):
+
+        # reshape data to see if there is a single input
+        data, single   = self.network.reshape_data_array(self.data)
+        ninput = data.shape[0]
+
+        # number of batches
+        batch_size = self.network.batch_size
+        nbatch = ninput/self.network.batch_size
+
+        grad, _, feed= self.network.get_grad_data()
+        results = []
+        for bi in xrange(nbatch):
+            batch_data = data[bi*batch_size:(bi+1)*batch_size]
+            results.append(self.sess.run(grad, feed_dict={feed: batch_data}))
+        grad_data = np.concatenate(results, axis=1)
+
+        grad_data_real = np.empty((self.ndim_out, self.ndata) + self.ndim_in)
+        W = self.network.param['W'].eval()
+        for oi in xrange(self.ndim_out):
+            for di in xrange(self.ndata):
+                grad_data_real[oi, di] = W[oi]
+        assert np.allclose(grad_data, grad_data_real)
+
+    def test_get_sec_data(self):
+
+        data, single   = self.network.reshape_data_array(self.data)
+        ninput = data.shape[0]
+
+        # number of batches
+        batch_size = self.network.batch_size
+
+        sec, _, _, feed = self.network.get_sec_data()
+        batch_data = data[0:batch_size]
+        results = self.sess.run(sec, feed_dict={feed: batch_data})
+        assert results.prod() == 0
+        assert results.shape == (self.ndim_out, self.batch_size,) + self.ndim_in
+
+
+
+# @unittest.skip()
+class test_SquareNetwork(unittest.TestCase):
+    
+    ndim_in = (5,)
+    ndim_out = 3
+    ndata  = 10
+    batch_size = 1
+
+    def setUp(self):
+        
+        # fake data and points
+        self.data =   np.random.randn(self.ndata, *self.ndim_in).astype('float32')
+        self.data_tensor = tf.constant(self.data)
+        
+        # build network
+        self.network = SquareNetwork(self.ndim_in, self.ndim_out, 
+                                     batch_size = self.batch_size)
+        self.sess = tf.InteractiveSession()
+        init = tf.global_variables_initializer()
+        self.sess.run(init)
+
+
+    def test_forward_array(self):
+        out = self.network.forward_array(self.data)
+        W = self.network.param['W'].eval()
+        b = self.network.param['b'].eval()
+        data = self.data
+        out_real = (b + data.dot(W.T)) ** 2.0
+        assert np.allclose(out, out_real), np.linalg.norm(out-out_real)**2
+
+    @unittest.skip('not required')
+    def test_get_grad_param(self):
+
+        W = self.network.param['W'].eval()
+        b = self.network.param['b'].eval()
+        data = self.data
+
+        grad_dict, output = self.network.get_grad_param(data)
+        grad_dict_true = OrderedDict.fromkeys(self.network.param)
+        output_true    = self.network.forward_array(data)
+        for k in grad_dict_true:
+            grad_dict_true[k] = np.zeros([self.network.ndim_out, self.ndata] + self.network.param[k].shape.dims)
+
+        lin = data.dot(W.T)+b
+        for oi in xrange(self.network.ndim_out):
+            for di in xrange(self.ndata):
+                grad_dict_true['W'][oi, di, oi] = 2*lin[di, oi]*data[di]
+                grad_dict_true['b'][oi, di, 0, oi] = 2*lin[di, oi]
+
+        assert np.allclose(output_true, output)
+        assert np.allclose(grad_dict_true['W'], grad_dict['W'])
+        assert np.allclose(grad_dict_true['b'], grad_dict['b'])
+
+    def test_get_grad_data(self):
+
+        # reshape data to see if there is a single input
+        data, single   = self.network.reshape_data_array(self.data)
+        ninput = data.shape[0]
+
+        # number of batches
+        batch_size = self.network.batch_size
+        nbatch = ninput/self.network.batch_size
+        output_true    = self.network.forward_array(self.data)
+        
+        # run the model
+        grad, _, feed= self.network.get_grad_data()
+        results = []
+        for bi in xrange(nbatch):
+            batch_data = data[bi*batch_size:(bi+1)*batch_size]
+            results.append(self.sess.run(grad, feed_dict={feed: batch_data}))
+        grad_data = np.concatenate(results, axis=1)
+        
+        # construct the real 
+        grad_data_real = np.empty((self.ndim_out, self.ndata) + self.ndim_in)
+        W = self.network.param['W'].eval()
+        b = self.network.param['b'].eval()
+        lin = data.dot(W.T)+b
+
+        for oi in xrange(self.ndim_out):
+            for di in xrange(self.ndata):
+                    grad_data_real[oi, di] = 2*W[oi]*lin[di, oi]
+        assert np.allclose(grad_data, grad_data_real)
+
+    def test_get_sec_data(self):
+        
+
+        # reshape data to see if there is a single input
+        data, single   = self.network.reshape_data_array(self.data)
+        ninput = data.shape[0]
+
+        # number of batches
+        batch_size = self.network.batch_size
+        nbatch = ninput/self.network.batch_size
+        output_true    = self.network.forward_array(self.data)
+
+        # run the model
+        sec, _, _, feed = self.network.get_sec_data()
+        results = []
+        for bi in xrange(nbatch):
+            batch_data = data[bi*batch_size:(bi+1)*batch_size]
+            results.append(self.sess.run(sec, feed_dict={feed: batch_data}))
+        sec_data = np.concatenate(results, axis=1)
+
+        # construct the real 
+        sec_data_real = np.empty((self.ndim_out, self.ndata) + self.ndim_in)
+        W = self.network.param['W'].eval()
+        b = self.network.param['b'].eval()
+        lin = data.dot(W.T)+b
+
+        for oi in xrange(self.ndim_out):
+            sec_data_real[oi] = 2*W[oi]**2
+        
+        assert np.allclose(sec_data_real, sec_data)
+
+
+# @unittest.skip()
+class test_ConvNetwork(unittest.TestCase):
+
+    ''' input: CWH
+        filter: nchannel x size x size x nfil 
+    '''
+    
+    ndim_in  = (1,3,3)
+    nfil     = 5
+    filter_size     = 3
+    stride   = 1
+    ndata  = 1000
+    batch_size = 1
+
+    def setUp(self):
+        
+        # fake data and points
+        self.data =   np.random.randn(self.ndata, *self.ndim_in).astype('float32')
+        self.data_tensor = tf.constant(self.data)
+        self.size_out = (self.ndim_in[-1] - self.filter_size + 1)/self.stride
+        self.ndim_out = self.size_out ** 2 * self.nfil
+        
+        # build network
+        self.network = ConvNetwork(self.ndim_in, self.nfil, self.filter_size, self.stride, self.batch_size)
+        self.sess = tf.InteractiveSession()
+        init = tf.global_variables_initializer()
+        self.sess.run(init)
+
+    def test_forward_array(self):
+
+        W = self.network.param['W'].eval()
+        W = np.moveaxis(W, [0,1,2,3],[2,3,1,0])
+        b = self.network.param['b'].eval()
+        data = self.data
+        
+        size_out = self.size_out
+        output = np.empty((self.ndata, self.nfil, size_out, size_out))
+        for i in range(size_out):
+            for j in range(size_out):
+                patch = data[:,:,
+                            i*self.stride:i*self.stride+self.filter_size,
+                            j*self.stride:j*self.stride+self.filter_size]
+                output[:,:,i,j] = np.einsum('ikmn,jkmn->ij', patch, W)
+        output = output.reshape(self.ndata, -1)
+        output += b
+        output_true = np.maximum(0, output)
+        output = self.network.forward_array(self.data)
+
+        assert np.allclose(output,  output_true, atol=1e-5), np.abs(output-output_true).max()
+
+    def test_get_grad_data(self):
+
+        # reshape data to see if there is a single input
+        data, single   = self.network.reshape_data_array(self.data)
+        ninput = data.shape[0]
+
+        # number of batches
+        batch_size = self.network.batch_size
+        nbatch = ninput/self.network.batch_size
+        output_true    = self.network.forward_array(self.data)
+        
+        # run the model
+        grad, _, feed= self.network.get_grad_data()
+        results = []
+        for bi in xrange(nbatch):
+            batch_data = data[bi*batch_size:(bi+1)*batch_size]
+            results.append(self.sess.run(grad, feed_dict={feed: batch_data}))
+        grad_data = np.concatenate(results, axis=1)
+        assert grad_data.shape == (self.ndim_out, self.ndata, ) + self.ndim_in
+
+    @unittest.skip('derivatie w.r.t param not needed')
+    def test_get_grad_param(self):
+
+        W = self.network.param['W'].eval()
+        b = self.network.param['b'].eval()
+        data = self.data
+
+        grad_dict, output = self.network.get_grad_param(data)
+        assert grad_dict['W'].shape == (self.ndim_out, self.ndata, 
+                                        self.filter_size, self.filter_size, 
+                                        self.ndim_in[0], self.nfil)
+
+    def test_get_sec_data(self):
+
+        # reshape data to see if there is a single input
+        data, single   = self.network.reshape_data_array(self.data)
+        ninput = data.shape[0]
+
+        # number of batches
+        batch_size = self.network.batch_size
+        nbatch = ninput/self.network.batch_size
+        output_true    = self.network.forward_array(self.data)
+        sec, _, _, feed = self.network.get_sec_data()
+
+        # run the model
+        results = [] 
+        t0 = time.time()
+        for bi in xrange(nbatch):
+            batch_data = data[bi*batch_size:(bi+1)*batch_size]
+            results.append(self.sess.run(sec, feed_dict={feed: batch_data}))
+        sec_data = np.concatenate(results, axis=1)
+        print 'second derivative: %d data took %.3f sec' % (ninput, time.time()-t0)
+
+
+# @unittest.skip('does not work yet')
 class test_kernel_score(unittest.TestCase):
 
     ndata  = 2
@@ -118,7 +388,7 @@ class test_kernel_score(unittest.TestCase):
 
     def setUp(self):
         
-        kernel = GaussianKernel()
+        kernel = GaussianKernel(self.ndim)
 
         # fake data and points
         self.data =   np.random.randn(self.ndata, *self.ndim_in).astype('float32')
