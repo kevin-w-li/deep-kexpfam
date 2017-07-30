@@ -5,126 +5,21 @@ import operator
 import itertools
 import time
 
-class GaussianKernel:
-
-    def __init__(self, ndim, sigma = 1.0, X = None, alpha = None):
-
-        '''
-        X: points that define the kernel, X.shape = (npoint, ndim)
-        '''
-            
-        if X is not None:
-            assert X.shape[1].value == ndim
-            self.X = X
-            self.npoint = X.shape[0].value
-            self.ndim = X.shape[1].value
-        else:
-            self.X  = None
-            self.npoint = None
-            self.ndim = ndim
-
-        if alpha is not None: 
-            assert alpha.shape[0] == X.shape[0]
-            self.alpha  = alpha
-        else:
-            self.alpha  = None
-
-        self.sigma = sigma
-        self.pdist2 = None
-        self.grad   = None
-        self.hess   = None
-
-    def set_points(self, X, alpha = None):
-        
-        if self.ndim is not None:
-            assert self.ndim == X.shape[1].value
-            self.X = X
-        else:
-            self.npoint = X.shape[0].value
-            self.ndim = X.shape[1].value
-
-        if alpha is not None:
-            assert alpha.shape[0] == X.shape[0]
-            self.alpha = alpha
-
-    def get_pdist2(self, Y):
-        
-        X = self.X
-        pdist2 = tf.reduce_sum(X**2, axis=1, keep_dims=True)
-        pdist2 -= 2.0*tf.matmul(X, Y, transpose_b = True)
-        pdist2 += tf.matrix_transpose(tf.reduce_sum(Y**2, axis=1, keep_dims=True))
-        self.pdist2 = pdist2
-        return pdist2
-
-    def set_pdist2(self, Y):
-
-        self.get_pdist2(Y)
-        
-    def get_gram_matrix(self,Y=None):
-        
-        if Y is not None:
-            self.pdist2 = self.get_pdist2(Y)
-        else:
-            if self.pdist2 is None:
-                self.set_pdist2(Y)
-        pdist2 = self.pdist2
-        sigma = self.sigma
-        gram = tf.exp(-0.5/sigma*pdist2)
-        return gram
-
-    def evaluate_fun(self, Y):
-        '''
-        takes in input vector Y of shape (ninput x ndim) and return the 
-        function defined by the lite model, linear combination of kernel
-        functions 
-        
-        sum_m alpha_m * k(x_m, y_i)
-        
-        '''
-        if Y.shape.ndims == 1:
-            Y = tf.expand_dims(Y,0)
-        
-        gram = self.get_gram_matrix(Y)
-
-        return tf.einsum('i,ij', self.alpha, gram)
-        
-    def get_grad(self, Y):
-
-        ''' first derivative of the function of lite model '''
-
-        X = self.X
-        gram = self.get_gram_matrix(Y)[:,:,None]
-
-        # D contrains the vector difference between pairs of x_m and y_i
-        # divided by sigma
-        D = (tf.expand_dims(X, 1) - tf.expand_dims(Y, 0))/self.sigma
-
-        # summing the first axes, 1 means the first 1 axes...
-        grad = tf.tensordot(self.alpha, gram * D, 1)
-
-        return grad
-    
-    def get_hess(self, Y):
-        '''
-        gram matrix, multiplied by ( outer products of x_m - y_i, minus
-                                     identity matrix of shape ndim x ndim)
-        '''
-        X = self.X
-        gram = self.get_gram_matrix(Y)[:,:,None, None]
-        # the first term
-        D = ( tf.expand_dims(X, 1) - tf.expand_dims(Y, 0) )/self.sigma
-        D2 = tf.einsum('ijk,ijl->ijkl', D, D)
-        I  = tf.eye( D.shape[-1].value )/self.sigma
-        I_exp = tf.expand_dims(tf.expand_dims(I, 0), 0)
-        hess  = tf.tensordot(self.alpha, gram * (D2 - I), 1)
-
-        return hess
-        
-
-        
+# =====================            
+# Kernel related
+# =====================            
 class KernelNetModel:
+    ''' A class that combines an ordinary kernel on the features
+        extracted by a net
+    ''' 
     
     def __init__(self, kernel, network):
+
+        ''' npoint: number of data that define the RKHS function
+            ndim  : dimentionality of input kernel, an integer
+            ndim_in: shape of input data to the network, a tuple
+            X     : points that define the RKHS function
+        '''
         
         self.npoint = kernel.npoint
         self.ndim   = kernel.ndim
@@ -266,9 +161,131 @@ class KernelNetModel:
         dkdx = tf.tensordot(dkdy, dydx, 1)
         d2kdx2 = tf.tensordot()
 
+class GaussianKernel:
+    '''
+    Output and derivatives of Gaussain kernels
+    X: the data points that define the function, rank 2
+    Y: input data, rank 2
+    '''
+
+    def __init__(self, ndim, sigma = 1.0, X = None, alpha = None):
+
+        '''
+        X: points that define the kernel, X.shape = (npoint, ndim)
+        '''
             
+        if X is not None:
+            assert X.shape[1].value == ndim
+            self.X = X
+            self.npoint = X.shape[0].value
+            self.ndim = X.shape[1].value
+        else:
+            self.X  = None
+            self.npoint = None
+            self.ndim = ndim
 
+        if alpha is not None: 
+            assert alpha.shape[0] == X.shape[0]
+            self.alpha  = alpha
+        else:
+            self.alpha  = None
 
+        self.sigma = sigma
+        self.pdist2 = None
+        self.grad   = None
+        self.hess   = None
+
+    def set_points(self, X, alpha = None):
+        
+        if self.ndim is not None:
+            assert self.ndim == X.shape[1].value
+            self.X = X
+        else:
+            self.npoint = X.shape[0].value
+            self.ndim = X.shape[1].value
+
+        if alpha is not None:
+            assert alpha.shape[0] == X.shape[0]
+            self.alpha = alpha
+
+    def get_pdist2(self, Y):
+        
+        X = self.X
+        pdist2 = tf.reduce_sum(X**2, axis=1, keep_dims=True)
+        pdist2 -= 2.0*tf.matmul(X, Y, transpose_b = True)
+        pdist2 += tf.matrix_transpose(tf.reduce_sum(Y**2, axis=1, keep_dims=True))
+        self.pdist2 = pdist2
+        return pdist2
+
+    def set_pdist2(self, Y):
+
+        self.get_pdist2(Y)
+        
+    def get_gram_matrix(self,Y=None):
+        
+        if Y is not None:
+            self.pdist2 = self.get_pdist2(Y)
+        else:
+            if self.pdist2 is None:
+                self.set_pdist2(Y)
+        pdist2 = self.pdist2
+        sigma = self.sigma
+        gram = tf.exp(-0.5/sigma*pdist2)
+        return gram
+
+    def evaluate_fun(self, Y):
+        '''
+        takes in input vector Y of shape (ninput x ndim) and return the 
+        function defined by the lite model, linear combination of kernel
+        functions 
+        
+        sum_m alpha_m * k(x_m, y_i)
+        
+        '''
+        if Y.shape.ndims == 1:
+            Y = tf.expand_dims(Y,0)
+        
+        gram = self.get_gram_matrix(Y)
+
+        return tf.einsum('i,ij', self.alpha, gram)
+        
+    def get_grad(self, Y):
+
+        ''' first derivative of the function of lite model '''
+
+        X = self.X
+        gram = self.get_gram_matrix(Y)[:,:,None]
+
+        # D contrains the vector difference between pairs of x_m and y_i
+        # divided by sigma
+        D = (tf.expand_dims(X, 1) - tf.expand_dims(Y, 0))/self.sigma
+
+        # summing the first axes, 1 means the first 1 axes...
+        grad = tf.tensordot(self.alpha, gram * D, 1)
+
+        return grad
+    
+    def get_hess(self, Y):
+        '''
+        gram matrix, multiplied by ( outer products of x_m - y_i, minus
+                                     identity matrix of shape ndim x ndim)
+        '''
+        X = self.X
+        gram = self.get_gram_matrix(Y)[:,:,None, None]
+        # the first term
+        D = ( tf.expand_dims(X, 1) - tf.expand_dims(Y, 0) )/self.sigma
+        D2 = tf.einsum('ijk,ijl->ijkl', D, D)
+        I  = tf.eye( D.shape[-1].value )/self.sigma
+        I_exp = tf.expand_dims(tf.expand_dims(I, 0), 0)
+        hess  = tf.tensordot(self.alpha, gram * (D2 - I), 1)
+
+        return hess
+        
+
+        
+# =====================            
+# Network related
+# =====================            
 class SumOutputNet:
     
     def __init__(self, net):
@@ -314,19 +331,28 @@ class SumOutputNet:
         self.sum_output = tf.reduce_sum(self.output, axis=0)
 
 class Network:
+    '''
+    Network should be implemented as subclass of Network
+
+    Define a forward_tensor method which takes in data as tf.Tensor (placeholder) of shape
+        [ndata, ...], e.g. [ndata, C, H, W] for conv net
+
+    and return the output as a vector
+        [ndata, ndim_out]
+    This class contains methods that computes gradients w.r.t. data and parameter (may not be required)
+    and second derivative w.r.t. data
+    
+    '''
    
 
     # input shape should be a tuple
     ndim_in = None
     # output shape is a scalar. Output assumed to be 1-D
     ndim_out= None
-
     # how much data to process for gradients, only for gradients and second gradients now.
     batch_size   = None
-
     # network parameter as a dictionary
     param   = None
-
     # empty now...
     out     = None
 
@@ -335,6 +361,7 @@ class Network:
         raise NotImplementedError('should implement individual networks')
 
     def reshape_data_array(self, x):
+        ''' check if input is 1-D and augment if so'''
         if x.ndim == len(self.ndim_in):
             if x.shape == self.ndim_in:
                 x = x[None,:]
@@ -349,6 +376,7 @@ class Network:
         return x, single
 
     def reshape_data_tensor(self, x):
+        ''' check if input is 1-D and augment if so '''
         if x.shape.ndims == len(self.ndim_in):
             if x.shape == self.ndim_in:
                 x = tf.expand_dims(x, 0)
@@ -364,10 +392,12 @@ class Network:
         
 
     def forward_array(self, data):
-        raise NotImplementedError('should implement individual networks')
+        ''' Output of the network given data array as np.array '''
+        raise NotImplementedError('should implement in individual networks')
 
     def forward_tensor(self, data):
-        raise NotImplementedError('should implement individual networks')
+        ''' Output of the network given data array as tf.Tensor '''
+        raise NotImplementedError('should implement in individual networks')
 
     def get_grad_param(self, data):
 
@@ -434,15 +464,17 @@ class Network:
         ''' get first derivative with respect to data,
             return gradient node, output node and input (feed) node
         '''
-
+        
+        t0 = time.time()
         son = SumOutputNet(self)
         grad   = tf.stack([ tf.gradients(son.sum_output[oi], son.batch)[0] for oi in xrange(self.ndim_out)])
+        print 'building grad output took %.3f sec' % (time.time() - t0)
 
         return grad, son.output, son.batch
 
     def get_sec_data(self):
 
-        ''' get second derivative with respect to data,
+        ''' get second derivative node with respect to data,
             return second derivative node, gradient node, network output node and input (feed) node
         '''
 
@@ -599,7 +631,7 @@ class ConvNetwork(Network):
         self.size    = size
         self.stride  = stride
 
-        self.ndim_out = (  (ndim_in[1] - size + 1) / stride  ) **2 * nfil
+        self.ndim_out = (  (ndim_in[1] - size) / stride + 1) **2 * nfil
 
         W      = tf.Variable(np.random.randn( * ((self.size,self.size)+ndim_in[0:1] + (nfil,))).astype('float32'))
         b      = tf.Variable(np.random.randn(self.ndim_out).astype('float32'))

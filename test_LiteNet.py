@@ -4,7 +4,7 @@ import unittest
 import numpy as np
 import time
 
-# @unittest.skip('')
+# @unittest.skip('does not work yet')
 class test_LiteNet(unittest.TestCase):
 
 
@@ -69,7 +69,7 @@ class test_LiteNet(unittest.TestCase):
             hess_real[vi] = tf.stack(tf.hessians(values[0], this_y)[0]).eval()
         assert np.allclose(hess, hess_real)
 
-# @unittest.skip('')
+# @unittest.skip('does not work yet')
 class test_LinearNetwork(unittest.TestCase):
     
     ndim_in = (5,)
@@ -102,7 +102,7 @@ class test_LinearNetwork(unittest.TestCase):
         out_real = b + data.dot(W.T)
         assert np.allclose(out, out_real), np.linalg.norm(out-out_real)**2
 
-    # @unittest.skip('not required')
+    @unittest.skip('not required')
     def test_get_grad_param(self):
         grad_dict, output = self.network.get_grad_param(self.data)
         grad_dict_true = OrderedDict.fromkeys(self.network.param)
@@ -159,7 +159,7 @@ class test_LinearNetwork(unittest.TestCase):
 
 
 
-# @unittest.skip()
+# @unittest.skip('does not work yet')
 class test_SquareNetwork(unittest.TestCase):
     
     ndim_in = (5,)
@@ -274,17 +274,23 @@ class test_SquareNetwork(unittest.TestCase):
         assert np.allclose(sec_data_real, sec_data)
 
 
-# @unittest.skip()
+# @unittest.skip('does not work yet')
 class test_ConvNetwork(unittest.TestCase):
 
-    ''' input: CWH
+    '''
+        ndim_in: nchannel x size x size
+        nfil   : number of filters
+        filter_size: length of a square filter
+        stride : 
+
+        input: CWH
         filter: nchannel x size x size x nfil 
     '''
     
-    ndim_in  = (1,3,3)
-    nfil     = 5
+    ndim_in  = (1,5,5)
+    nfil     = 2
     filter_size     = 3
-    stride   = 1
+    stride   = 2
     ndata  = 1000
     batch_size = 1
 
@@ -293,7 +299,7 @@ class test_ConvNetwork(unittest.TestCase):
         # fake data and points
         self.data =   np.random.randn(self.ndata, *self.ndim_in).astype('float32')
         self.data_tensor = tf.constant(self.data)
-        self.size_out = (self.ndim_in[-1] - self.filter_size + 1)/self.stride
+        self.size_out = (self.ndim_in[-1] - self.filter_size)/self.stride + 1
         self.ndim_out = self.size_out ** 2 * self.nfil
         
         # build network
@@ -338,10 +344,12 @@ class test_ConvNetwork(unittest.TestCase):
         # run the model
         grad, _, feed= self.network.get_grad_data()
         results = []
+        t0 = time.time()
         for bi in xrange(nbatch):
             batch_data = data[bi*batch_size:(bi+1)*batch_size]
             results.append(self.sess.run(grad, feed_dict={feed: batch_data}))
         grad_data = np.concatenate(results, axis=1)
+        print 'computing gradient took %.3f' % (time.time() - t0)
         assert grad_data.shape == (self.ndim_out, self.ndata, ) + self.ndim_in
 
     @unittest.skip('derivatie w.r.t param not needed')
@@ -378,7 +386,7 @@ class test_ConvNetwork(unittest.TestCase):
         print 'second derivative: %d data took %.3f sec' % (ninput, time.time()-t0)
 
 
-# @unittest.skip('does not work yet')
+# @unittest.skip()
 class test_kernel_score(unittest.TestCase):
 
     ndata  = 2
