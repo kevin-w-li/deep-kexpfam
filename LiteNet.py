@@ -11,9 +11,20 @@ import time
 class KernelNetModel:
     ''' A class that combines an ordinary kernel on the features
         extracted by a net
+
+        This is used to build an infinite dimensional exp-fam model
+        on the data, fitted using score matching
+
+        There are two components: 
+            kernel, responsible for computing the gram matrix
+            network, responsible for network forward and derivatives
+
+        This object then computes the derivatives of the function defined by the kernels
+        and points that set up this function dk(x_i, y)/dy, which is then used to compute the score
+
     ''' 
     
-    def __init__(self, kernel, network):
+    def __init__(self, kernel, network, alpha, points = None):
 
         ''' npoint: number of data that define the RKHS function
             ndim  : dimentionality of input kernel, an integer
@@ -21,23 +32,157 @@ class KernelNetModel:
             X     : points that define the RKHS function
         '''
         
-        self.npoint = kernel.npoint
-        self.ndim   = kernel.ndim
+        self.alpha   = alpha
+        self.npoint = alpha.shape[0].value
+        self.ndim   = network.ndim_out
         self.ndim_in= network.ndim_in
         self.network = network
-        assert self.ndim == self.network.ndim_out
         self.kernel  = kernel
-        self.X       = self.kernel.X
+        if points is not None:
+            self.set_points(points)
 
-    def set_points(self, X):
-        '''This sets up the set of points used by model x_i's
-        Input is a set of images that will first be processed by network
-        These are stored inside the model as parameters
+    def _process_data(self, data):
+
+        Y = self.network.forward_tensor(data)
+        return Y
+
+
+    def set_points(self, points):
+        ''' This sets up the set of points used by model x_i's
+            Input is a set of images that will first be processed by network
+            These are stored inside the model as parameters
         '''
-        self.kernel.set_points(self.network.forward_tensor(X))
-        self.ndim = self.kernel.ndim
-        self.npoint = self.kernel.npoint
-        self.X      = self.kernel.X
+        assert points.shape[1:] == self.ndim_in, 'input shape of points not the same as predefiend'
+        self.X = self.network.forward_tensor(points)
+
+    def evaluate_kernel_fun(self, Y):
+        '''
+        takes in input vector Y (output of the network) of shape (ninput x ndim) 
+        and return the function defined by the lite model, linear combination of kernel
+        functions 
+        
+        sum_m alpha_m * k(x_m, y_i)
+
+        this is used mainly for testing the gradients using autodiff
+        
+        '''
+        if Y.shape.ndims == 1:
+            Y = tf.expand_dims(Y,0)
+        
+        gram = self.kernel.get_gram_matrix(self.X, Y)
+
+        return tf.einsum('i,ij', self.alpha, gram)
+        
+    def get_kernel_fun_grad(self, Y):
+
+        ''' first derivative of the function of lite model '''
+
+        K = self.kernel.get_grad(self.X, Y)
+        grad = tf.reduce_sum(self.alpha[:,None, None] * K, 0)
+
+        return grad, K
+    
+    def get_kernel_fun_hess(self, Y):
+        '''
+        gram matrix, multiplied by ( outer products of x_m - y_i, minus
+                                     identity matrix of shape ndim x ndim)
+        '''
+        K = self.kernel.get_hess(self.X, Y)
+        hess  = tf.reduce_sum(self.alpha[:,None, None, None] 
+                                * K, 0)
+
+        return hess, K
+
+    def _construct_index(self):
+        ''' construct string for use in tf.einsum as it does not support...'''
+        return ''.join([str(unichr(i+115)) for i in range(len(self.ndim_in))])
+
+    def score(self, lam=0.0):
+        points = tf.placeholder('float32', shape=(self.npoint,) + self.ndim_in)
+        print 'points placeholder', points
+        self.X = self._process_data(points)
+        d2ydx2, dydx, y, data = self.network.get_sec_data()
+        dfdy, _   = self.get_kernel_fun_grad(y)
+        d2fdy2, _ = self.get_kernel_fun_hess(y)
+
+        input_idx = self._construct_index()
+
+        dfdx = tf.einsum('jk,kj'+input_idx+'->j'+input_idx,
+                        dfdy, dydx)
+
+        d2fdx2 = tf.einsum('jkl,klj'+input_idx + '->j'+input_idx, 
+                            d2fdy2, dydx[None,...] * dydx[:,None,...]) + \
+                 tf.einsum('jk,kj'+input_idx + '->j'+input_idx, 
+                            dfdy, d2ydx2)
+
+        score = tf.reduce_sum(d2fdx2 + 0.5 * dfdx**2)
+        score += lam * self.network.get_param_size()
+        return score, points, data
+
+
+    def linear_score(self, lam=0.0):
+
+        '''
+        The score that is applied to linear-ReLU networks such that
+        the second derivatives w.r.t input are zeros
+        '''
+
+        points = tf.placeholder('float32', shape=(self.npoint,) + self.ndim_in)
+        self.set_points(points)
+        dydx, y, data = self.network.get_grad_data()
+        dfdy, _   = self.get_kernel_fun_grad(y)
+        d2fdy2, _ = self.get_kernel_fun_hess(y)
+
+        input_idx = self._construct_index()
+
+        dfdx = tf.einsum('jk,kj'+input_idx+'->j'+input_idx,
+                        dfdy, dydx)
+
+        d2fdx2 = tf.einsum('jkl,klj'+input_idx + '->j'+input_idx, 
+                            d2fdy2, dydx[None,...] * dydx[:,None,...])
+
+        score = tf.reduce_sum(d2fdx2 + 0.5 * dfdx**2)
+        score += lam * self.network.get_param_size()
+        return score, points, data
+
+    def get_opt_alpha(self):
+        ''' 
+        This is used to get the optimal alpha, not tested
+        '''
+                                    
+        points = tf.placeholder('float32', shape=(self.npoint,) + self.ndim_in)
+        self.set_points(self._process_data(points))
+        d2ydx2, dydx, y, data = self.network.get_sec_data()
+        _ , gradK = self.kernel.get_grad(y)
+        _ , hessK = self.kernel.get_hess(y)
+
+        input_idx = self._construct_index()
+
+        dkdx = tf.einsum('ijk,kj'+input_idx+'->ij'+input_idx,
+                        gradK, dydx)
+
+        d2kdx2 = tf.einsum('ijkl,klj'+input_idx + '->ij'+input_idx, 
+                            hessK, dydx[None,...] * dydx[:,None,...]) + \
+                 tf.einsum('ijk,kj'+input_idx + '->ij'+input_idx, 
+                            gradK, d2ydx2)
+
+        H = tf.reduce_sum(tf.reduce_sum(d2kdx2,-1), -1)
+        G = tf.einsum('ik'+input_idx+',jk'+input_idx+'->ij',
+                      dkdx, dkdx)
+
+        alpha = tf.matrix_solve(G+tf.eye(G.shape[0].value)*0.1, -H[:,None])[:,0]
+        opt_score = tf.einsum('i,i->', alpha, H) + \
+                    0.5 * tf.einsum('i,ij,j', alpha, G, alpha)
+
+        return alpha, opt_score, points, data
+        
+    ''' The following are methdos that compute the score of a model
+        using an ordinary kernel only, and commpute
+        the optimal coefficient of the kernel points[
+            Gradient-free Hamiltonian Monte Carlo with Efficient Kernel Exponential Families
+            Heiko Strathmann, Dino Sejdinovic, Samuel Livingstone, Zoltan Szabo, Arthur Gretton
+            ]
+    '''
 
     def score_original(self, data):
 
@@ -47,14 +192,14 @@ class KernelNetModel:
 
         sigma = self.kernel.sigma*1
         N = data.shape[0].value
-        alpha = self.kernel.alpha
+        alpha = self.alpha
         ndim  = self.ndim
 
         # output of the network, same as x's
         Y = self.network.forward_tensor(data)
 
         # compute gram matrix of network output with points
-        K = self.kernel.get_gram_matrix(Y)
+        K = self.kernel.get_gram_matrix(self.X, Y)
         D = 1.0/sigma*self.kernel.pdist2 - ndim
         J = tf.reduce_sum(tf.expand_dims(alpha,1) * K * D) * 1.0 / N / sigma
         
@@ -76,35 +221,6 @@ class KernelNetModel:
 
         return J
 
-    def _process_data(self, data):
-
-        if data is not None:
-                Y = self.network.forward_tensor(data)
-        else:
-            if self.X is None:
-                raise NameError('run set_point first to set the kernel points, or provide it as input')
-            Y = self.X
-        return Y
-
-    def kernel_score(self, data=None):
-        
-        Y = self._process_data(data)
-        ndata = data.shape.dims[0].value
-
-        # alpha as vectors
-        # alpha as vectors
-        alpha = self.kernel.alpha
-        alpha_V = tf.expand_dims(alpha,1)
-        alpha_T = tf.expand_dims(alpha,0)
-
-        sigma = self.kernel.sigma
-
-        b, C = self._kernel_score_stats(Y)
-
-        J = 1.0 / ndata / sigma    * tf.einsum('i,i'   , alpha, b) + \
-            0.5 / ndata / sigma**2 * tf.einsum('i,ij,j', alpha, C, alpha)
-
-        return J
 
     def _kernel_score_stats(self, Y):
         
@@ -117,7 +233,7 @@ class KernelNetModel:
         N = Y.shape[0]
         D = self.ndim
 
-        K= self.kernel.get_gram_matrix(Y)
+        K= self.kernel.get_gram_matrix(X, Y)
         K_exp = tf.expand_dims(K, -1)
 
         S = tf.expand_dims(X,1) - tf.expand_dims(Y,0)
@@ -132,6 +248,23 @@ class KernelNetModel:
 
         return b, C
 
+    def kernel_score(self, data=None):
+        
+        Y = self._process_data(data)
+        ndata = data.shape.dims[0].value
+
+        alpha = self.alpha
+        alpha_V = tf.expand_dims(alpha,1)
+        alpha_T = tf.expand_dims(alpha,0)
+
+        sigma = self.kernel.sigma
+
+        b, C = self._kernel_score_stats(Y)
+
+        J = 1.0 / ndata / sigma    * tf.einsum('i,i'   , alpha, b) + \
+            0.5 / ndata / sigma**2 * tf.einsum('i,ij,j', alpha, C, alpha)
+
+        return J
 
     def kernel_fit(self, data=None, lam = 0.01):
 
@@ -141,148 +274,120 @@ class KernelNetModel:
        
         alpha_hat =  -self.kernel.sigma * \
                         tf.matrix_solve( C, tf.expand_dims(b,-1) )
-        self.kernel.alpha = tf.assign(self.kernel.alpha, tf.squeeze(alpha_hat))
+        self.alpha = tf.assign(self.alpha, tf.squeeze(alpha_hat))
       
-        return self.kernel.alpha
+        return self.alpha
 
 
-    def kernel_grad(self, data):
-        Y = self.net.forward_tensor(data)
-        return self.kernel.grad(Y)
 
-    def max_score(self):
+class KernelNetMSD:
+
+    ''' 
+        A class that combines an ordinary kernel and network that finds the 
+        maximum Stein discrepency (MSD) of data under a particular parametric (probablistic)
+        model, potentially unnormalized, whose gradients on the data (score) can be computed 
+
+        This gradient is required to calculate MSD
+    '''
+
+    def __init__(self, kernel, network):
         
-        # TODO
+        self.npoint = kernel.npoint
+        self.ndim   = kernel.ndim
+        self.ndim_in= network.ndim_in
+        self.network = network
+        assert self.ndim == self.network.ndim_out
+        self.kernel  = kernel
+        self.X       = self.kernel.X
 
-        data = tf.placeholder('float32', shape=(self.network.batch_size,) + self.ndim_in)
-        d2ydx2, dydx, y, feed = self.network.get_sec_data()
-        dkdy = self.network.get_grad(y)
-        d2kdy2 = self.network.get_hess(y)
-        dkdx = tf.tensordot(dkdy, dydx, 1)
-        d2kdx2 = tf.tensordot()
+    def MSD(self, model):
+
+        z1 = tf.placeholder('float32', shape = (self.batch_size,) + self.ndim_in)
+        z2 = tf.placeholder('float32')
+
+        dy1dz1, y1, z1 = self.network.get_grad_data()
+        dy2dz2, y2, z2 = self.network.get_grad_data()
+
+
+        self.kernel.set_points(self._process_data(points))
+
+        dfdy, _   = self.kernel.get_grad(y)
+        d2fdy2, _ = self.kernel.get_hess(y)
+
+        
+
+
 
 class GaussianKernel:
+
     '''
     Output and derivatives of Gaussain kernels
     X: the data points that define the function, rank 2
     Y: input data, rank 2
     '''
 
-    def __init__(self, ndim, sigma = 1.0, X = None, alpha = None):
+    def __init__(self, ndim, sigma = 1.0, X = None, npoint = None):
 
         '''
         X: points that define the kernel, X.shape = (npoint, ndim)
         '''
             
-        if X is not None:
-            assert X.shape[1].value == ndim
-            self.X = X
-            self.npoint = X.shape[0].value
-            self.ndim = X.shape[1].value
-        else:
-            self.X  = None
-            self.npoint = None
-            self.ndim = ndim
-
-        if alpha is not None: 
-            assert alpha.shape[0] == X.shape[0]
-            self.alpha  = alpha
-        else:
-            self.alpha  = None
-
         self.sigma = sigma
         self.pdist2 = None
         self.grad   = None
         self.hess   = None
 
-    def set_points(self, X, alpha = None):
-        
-        if self.ndim is not None:
-            assert self.ndim == X.shape[1].value
-            self.X = X
-        else:
-            self.npoint = X.shape[0].value
-            self.ndim = X.shape[1].value
 
-        if alpha is not None:
-            assert alpha.shape[0] == X.shape[0]
-            self.alpha = alpha
-
-    def get_pdist2(self, Y):
+    def get_pdist2(self, X, Y):
         
-        X = self.X
+        if X.shape.ndims==1:
+            X = X[None,:]
+        if Y.shape.ndims==1:
+            Y = Y[None,:]
         pdist2 = tf.reduce_sum(X**2, axis=1, keep_dims=True)
         pdist2 -= 2.0*tf.matmul(X, Y, transpose_b = True)
         pdist2 += tf.matrix_transpose(tf.reduce_sum(Y**2, axis=1, keep_dims=True))
         self.pdist2 = pdist2
         return pdist2
 
-    def set_pdist2(self, Y):
+    def get_gram_matrix(self, X, Y):
 
-        self.get_pdist2(Y)
-        
-    def get_gram_matrix(self,Y=None):
-        
-        if Y is not None:
-            self.pdist2 = self.get_pdist2(Y)
-        else:
-            if self.pdist2 is None:
-                self.set_pdist2(Y)
-        pdist2 = self.pdist2
+        pdist2 = self.get_pdist2(X, Y)
         sigma = self.sigma
         gram = tf.exp(-0.5/sigma*pdist2)
         return gram
 
-    def evaluate_fun(self, Y):
-        '''
-        takes in input vector Y of shape (ninput x ndim) and return the 
-        function defined by the lite model, linear combination of kernel
-        functions 
-        
-        sum_m alpha_m * k(x_m, y_i)
-        
-        '''
-        if Y.shape.ndims == 1:
-            Y = tf.expand_dims(Y,0)
-        
-        gram = self.get_gram_matrix(Y)
 
-        return tf.einsum('i,ij', self.alpha, gram)
-        
-    def get_grad(self, Y):
+    def get_grad(self, X, Y):
+        ''' first derivative of the kernel on the second input, dk(x, y)/dy'''
 
-        ''' first derivative of the function of lite model '''
-
-        X = self.X
-        gram = self.get_gram_matrix(Y)[:,:,None]
+        gram = self.get_gram_matrix(X, Y)[:,:,None]
 
         # D contrains the vector difference between pairs of x_m and y_i
         # divided by sigma
         D = (tf.expand_dims(X, 1) - tf.expand_dims(Y, 0))/self.sigma
 
-        # summing the first axes, 1 means the first 1 axes...
-        grad = tf.tensordot(self.alpha, gram * D, 1)
+        # K is a vector that has derivatives on all points
+        K = (gram * D)
 
-        return grad
-    
-    def get_hess(self, Y):
+        return K
+        
+    def get_hess(self, X, Y):
+
+        ''' 
+            first derivative of the kernel on the second input, d2k(x, y)/dy2
         '''
-        gram matrix, multiplied by ( outer products of x_m - y_i, minus
-                                     identity matrix of shape ndim x ndim)
-        '''
-        X = self.X
-        gram = self.get_gram_matrix(Y)[:,:,None, None]
+        gram = self.get_gram_matrix(X, Y)[:,:,None, None]
         # the first term
         D = ( tf.expand_dims(X, 1) - tf.expand_dims(Y, 0) )/self.sigma
         D2 = tf.einsum('ijk,ijl->ijkl', D, D)
         I  = tf.eye( D.shape[-1].value )/self.sigma
         I_exp = tf.expand_dims(tf.expand_dims(I, 0), 0)
-        hess  = tf.tensordot(self.alpha, gram * (D2 - I), 1)
 
-        return hess
-        
+        # K is a vector that has the hessian on all points
+        K = gram * (D2 - I)
 
-        
+        return K
 # =====================            
 # Network related
 # =====================            
@@ -467,10 +572,19 @@ class Network:
         
         t0 = time.time()
         son = SumOutputNet(self)
-        grad   = tf.stack([ tf.gradients(son.sum_output[oi], son.batch)[0] for oi in xrange(self.ndim_out)])
+        grad = []
+        t0 = time.time()
+        t1 = time.time()
+        print 'building grad output'
+        for oi in xrange(self.ndim_out):
+            g = tf.gradients(son.sum_output[oi], son.batch)[0]
+            grad.append(g)
+            print '\r%3d out of %3d took %5.3f sec' % ( oi, self.ndim_out, time.time()-t1),
+            ti = time.time()
+        grad   = tf.stack(grad)
         print 'building grad output took %.3f sec' % (time.time() - t0)
 
-        return grad, son.output, son.batch
+        return grad, tf.stack(son.output), son.batch
 
     def get_sec_data(self):
 
@@ -486,6 +600,7 @@ class Network:
 
         sum_grad = tf.reduce_sum(grad, 1)
         g_flat = tf.reshape(sum_grad, [self.ndim_out, -1])
+
         # this is the linear index for the input dimensions
         raveled_index = np.arange(np.prod(self.ndim_in)).astype('int32')
         unraveled_index = np.array(np.unravel_index(raveled_index, self.ndim_in))
@@ -493,6 +608,18 @@ class Network:
         for oi in xrange(self.ndim_out):
             t0 = time.time()
             print 'building output %d out of %d' % (oi+1, self.ndim_out)
+
+            # tf.gather_nd(A, idx) takes tensor A and return elements whose indices are specified in idx
+            # like [A[i] for i in idx] 
+            # The following line takes derivative of each the gradient at oi'th output dimension
+            # w.r.t. each input dimension, stack over input dimension
+            #   idx looks like:
+            #   [   [0, input_dim_1, input_dim_2, ... ,],
+            #       [1, input_dim_1, input_dim_2, ... ,],
+            #       ...
+            #       [batch_size, input_dim_1, input_dim_2, ... ,]
+            #   ]
+            # And the result below is of shape [prod(self.ndim_in), batch_size]
             sec_oi_ii = tf.stack([ tf.gather_nd(
                                         self._grad_zero(g_flat[oi, i], [son.batch])[0],
                                         np.c_[  np.arange(self.batch_size)[:,None], 
@@ -502,9 +629,10 @@ class Network:
             print 'took %.3f sec' % (time.time()-t0)
             sec.append(sec_oi_ii)
         sec_stack = tf.stack(sec)
+        # make the output shape [ ndim_out, batch_size, prod(self.ndim_in) ]
         sec_stack = tf.transpose(sec_stack, perm=[0,2,1])
         sec_stack = tf.reshape(sec_stack, (self.ndim_out, self.batch_size,) +  self.ndim_in)
-        return sec_stack, grad, son.output, son.batch
+        return sec_stack, grad, tf.stack(son.output), son.batch
 
     @staticmethod
     def _grad_zero(f, x):
@@ -515,18 +643,26 @@ class Network:
                 grad[gi] = tf.zeros_like(x[gi])
         return grad 
 
+    def get_param_size(self):
+        
+        size = 0.0
+        for _, v in self.param.items():
+            size += tf.reduce_sum(v**2.0) 
+        return size 
+
+
 
 class LinearNetwork(Network):
 
     ''' y =  W \cdot x + b '''
 
-    def __init__(self, ndim_in, ndim_out, batch_size = 2):
+    def __init__(self, ndim_in, ndim_out, batch_size = 2, init_std = 1.0, init_mean = 0.0):
         
         self.ndim_out  = ndim_out
         self.ndim_in = ndim_in
         self.batch_size = batch_size
-        W     = tf.Variable(np.random.randn(ndim_out, *ndim_in).astype('float32'))
-        b      = tf.Variable(np.random.randn(1, ndim_out).astype('float32'))
+        W   = tf.Variable(init_mean + np.random.randn(ndim_out, *ndim_in).astype('float32'))*init_std
+        b   = tf.Variable(np.random.randn(1, ndim_out).astype('float32'))*init_std
         self.param = OrderedDict([('W', W), ('b', b)])
         self.out   = None
 
@@ -565,6 +701,19 @@ class LinearNetwork(Network):
         if single:
             out = out[0]
         return out
+
+    def get_grad_data(self):
+
+        param = self.param
+
+        # create input placeholder that has batch_size
+        data = tf.placeholder(tf.float32, shape = (self.batch_size,) + self.ndim_in)
+        data, single = self.reshape_data_tensor(data)
+        W = param['W']
+        output = self.forward_tensor(data, param)
+        grad = tf.tile(W[None,:,:], [self.batch_size, 1, 1])
+        grad = tf.transpose(grad, [1,0,2])
+        return grad, output, data
 
 
 class SquareNetwork(Network):
@@ -618,11 +767,82 @@ class SquareNetwork(Network):
             out = out[0]
         return out
 
+class LinearReLUNetwork(Network):
 
+    ''' y =  ReLU( W \cdot x + b ) '''
+
+    def __init__(self, ndim_in, ndim_out, batch_size = 2, 
+                init_std = 1.0, init_mean = 1.0, 
+                grads = [0.0, 1.0]):
+        
+        self.ndim_out  = ndim_out
+        self.ndim_in = ndim_in
+        self.batch_size = batch_size
+        W   = tf.Variable(init_mean + np.random.randn(ndim_out, *ndim_in).astype('float32'))*init_std
+        b   = tf.Variable(np.random.randn(1, ndim_out).astype('float32'))*init_std
+        self.grads = grads
+        self.param = OrderedDict([('W', W), ('b', b)])
+        self.out   = None
+
+    def forward_array(self, data, param = None):
+        
+        if param is None:
+            param = self.param
+        data, single = self.reshape_data_array(data)
+            
+        data_tensor  = tf.placeholder('float32', shape= (None, ) + self.ndim_in)
+
+        W = param['W']
+        b = param['b']
+        out = tf.matmul(data_tensor, W,  transpose_b = True)
+        out += b
+        out = tf.maximum(out*(self.grads[1]), out*(self.grads[0]))
+        sess = tf.Session()
+        init = tf.global_variables_initializer()
+        sess.run(init)
+        out_value = sess.run(out, feed_dict={data_tensor: data})
+        if single:
+            out_value = out_value[0]
+        return out_value
+
+    def forward_tensor(self, data, param = None):
+        
+        if param is None:
+            param = self.param
+        data, single = self.reshape_data_tensor(data)
+            
+        W = param['W']
+        b = param['b']
+        out = tf.matmul(data, W,  transpose_b = True)
+        out += b
+        out = tf.maximum(out * self.grads[1], out * self.grads[0])
+
+        if single:
+            out = out[0]
+        return out
+   
+    def get_grad_data(self):
+
+        param = self.param
+
+        # create input placeholder that has batch_size
+        data = tf.placeholder(tf.float32, shape = (self.batch_size,) + self.ndim_in)
+        data, single = self.reshape_data_tensor(data)
+        W = param['W']
+        out =   self.forward_tensor(data, param)
+        out =   tf.maximum(out*(self.grads[1]), out*(self.grads[0]))
+        grad = (self.grads[1] * tf.cast(out > 0, 'float32' ) + \
+                self.grads[0] * tf.cast(out <=0, 'float32' )) [:,:,None] * \
+                W[None,:,:]
+        grad = tf.transpose(grad, [1,0,2])
+        return grad, out, data
+
+  
 class ConvNetwork(Network):
+
     ''' one layer convolution network'''
 
-    def __init__(self, ndim_in, nfil, size, stride, batch_size = 2):
+    def __init__(self, ndim_in, nfil, size, stride=1, batch_size = 2):
         
         self.ndim_in = ndim_in
         self.batch_size = batch_size
@@ -676,7 +896,7 @@ class ConvNetwork(Network):
         conv = tf.nn.conv2d(data, W,
                             [1,1]+[self.stride]*2, 'VALID', data_format='NCHW')
         conv = tf.reshape(conv,[ndata,-1])
-        conv = conv + b
+        conv = conv + b[None,:]
         out = tf.nn.relu(conv)
 
         if single:
