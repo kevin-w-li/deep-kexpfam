@@ -93,17 +93,29 @@ class KernelNetModel:
 
         return hess, K
 
+    def get_kernel_fun_grad_hess(self, Y):
+        '''
+        compute the gradient and hessian using one computation of gram matrix
+        '''
+        K1, K2 = self.kernel.get_grad_hess(self.X, Y)
+
+        grad = tf.reduce_sum(self.alpha[:,None, None] * K1, 0)
+        hess = tf.reduce_sum(self.alpha[:,None, None, None] * K2, 0)
+
+        return grad, hess
+
     def _construct_index(self):
         ''' construct string for use in tf.einsum as it does not support...'''
         return ''.join([str(unichr(i+115)) for i in range(len(self.ndim_in))])
 
     def score(self, lam=0.0):
+
         points = tf.placeholder('float32', shape=(self.npoint,) + self.ndim_in)
-        print 'points placeholder', points
+
         self.X = self._process_data(points)
+
         d2ydx2, dydx, y, data = self.network.get_sec_data()
-        dfdy, _   = self.get_kernel_fun_grad(y)
-        d2fdy2, _ = self.get_kernel_fun_hess(y)
+        dfdy, d2fdy2   = self.get_kernel_fun_grad_hess(y)
 
         input_idx = self._construct_index()
 
@@ -130,8 +142,7 @@ class KernelNetModel:
         points = tf.placeholder('float32', shape=(self.npoint,) + self.ndim_in)
         self.set_points(points)
         dydx, y, data = self.network.get_grad_data()
-        dfdy, _   = self.get_kernel_fun_grad(y)
-        d2fdy2, _ = self.get_kernel_fun_hess(y)
+        dfdy, d2fdy2  = self.get_kernel_fun_grad_hess(y)
 
         input_idx = self._construct_index()
 
@@ -292,24 +303,19 @@ class KernelNetMSD:
 
     def __init__(self, kernel, network):
         
-        self.npoint = kernel.npoint
-        self.ndim   = kernel.ndim
-        self.ndim_in= network.ndim_in
-        self.network = network
+        self.batch_size = network.batch_size
+        self.ndim       = kernel.ndim
+        self.ndim_in    = network.ndim_in
+        self.network    = network
         assert self.ndim == self.network.ndim_out
         self.kernel  = kernel
-        self.X       = self.kernel.X
 
     def MSD(self, model):
 
         z1 = tf.placeholder('float32', shape = (self.batch_size,) + self.ndim_in)
-        z2 = tf.placeholder('float32')
-
-        dy1dz1, y1, z1 = self.network.get_grad_data()
-        dy2dz2, y2, z2 = self.network.get_grad_data()
+        z2 = tf.placeholder('float32', shape = (self.batch_size,) + self.ndim_in)
 
 
-        self.kernel.set_points(self._process_data(points))
 
         dfdy, _   = self.kernel.get_grad(y)
         d2fdy2, _ = self.kernel.get_hess(y)
@@ -382,12 +388,35 @@ class GaussianKernel:
         D = ( tf.expand_dims(X, 1) - tf.expand_dims(Y, 0) )/self.sigma
         D2 = tf.einsum('ijk,ijl->ijkl', D, D)
         I  = tf.eye( D.shape[-1].value )/self.sigma
-        I_exp = tf.expand_dims(tf.expand_dims(I, 0), 0)
 
         # K is a vector that has the hessian on all points
         K = gram * (D2 - I)
 
         return K
+
+    def get_grad_hess(self, X, Y):
+
+        '''
+        compute the first and second derivatives using one computation of gram matrix
+        '''
+
+        gram = self.get_gram_matrix(X, Y)
+
+        # D contrains the vector difference between pairs of x_m and y_i
+        # divided by sigma
+        D = (tf.expand_dims(X, 1) - tf.expand_dims(Y, 0))/self.sigma
+
+        # K is a vector that has derivatives on all points
+        K1 = (gram[:,:,None]* D)
+        
+        D2 = tf.einsum('ijk,ijl->ijkl', D, D)
+        I  = tf.eye( D.shape[-1].value )/self.sigma
+
+        # K is a vector that has the hessian on all points
+        K2 = gram[:,:,None,None] * (D2 - I)
+
+        return K1, K2
+
 # =====================            
 # Network related
 # =====================            

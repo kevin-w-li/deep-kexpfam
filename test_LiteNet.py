@@ -4,7 +4,7 @@ import unittest
 import numpy as np
 import time
 
-@unittest.skip('does not work yet')
+# @unittest.skip('does not work yet')
 class test_GaussianKernel(unittest.TestCase):
 
 
@@ -58,6 +58,22 @@ class test_GaussianKernel(unittest.TestCase):
                 gram = self.kernel.get_gram_matrix(this_x, this_y)
                 hess_real[xi, yi] = tf.hessians(gram, this_y)[0].eval()
         assert np.allclose(hess, hess_real), np.linalg.norm(hess_real-hess)
+
+    def test_get_grad_hess(self):
+
+        grad, hess = self.kernel.get_grad_hess(self.X, self.Y)
+        grad = grad.eval()
+        hess = hess.eval()
+        
+        grad_real = self.kernel.get_grad(self.X, self.Y)
+        grad_real = grad_real.eval()
+
+        hess_real = self.kernel.get_hess(self.X, self.Y)
+        hess_real = hess_real.eval()
+
+        assert np.allclose(grad, grad_real), np.linalg.norm(grad_real-grad)
+        assert np.allclose(hess, hess_real), np.linalg.norm(hess_real-hess)
+
 
 
 @unittest.skip('does not work yet')
@@ -567,7 +583,6 @@ class test_KernelNetModel(unittest.TestCase):
 
         assert np.allclose(f_real, f), np.linalg.norm(f_real - f)
 
-    @unittest.skip('')
     def test_get_kernel_fun_grad(self):
     
         grad, _ = self.model.get_kernel_fun_grad(self.Y)
@@ -581,8 +596,6 @@ class test_KernelNetModel(unittest.TestCase):
         assert np.allclose(grad, grad_real)
 
 
-    
-    @unittest.skip('')
     def test_get_kernel_fun_hess(self):
         
         hess, _ = self.model.get_kernel_fun_hess(self.Y)
@@ -597,6 +610,22 @@ class test_KernelNetModel(unittest.TestCase):
             values = self.model.evaluate_kernel_fun(this_y)
             hess_real[vi] = tf.hessians(values[0], this_y)[0].eval()
         assert np.allclose(hess, hess_real)
+    
+    def test_get_kernel_fun_grad_hess(self):
+
+        grad, hess = self.model.get_kernel_fun_grad_hess(self.Y)
+        grad = grad.eval()
+        hess = hess.eval()
+
+        grad_real,_ = self.model.get_kernel_fun_grad(self.Y)
+        hess_real,_ = self.model.get_kernel_fun_hess(self.Y)
+
+        grad_real = grad_real.eval()
+        hess_real = hess_real.eval()
+
+        assert np.allclose(grad, grad_real)
+        assert np.allclose(hess, hess_real)
+        
 
     def test_score(self):
 
@@ -619,6 +648,7 @@ class test_KernelNetModel(unittest.TestCase):
                                   this_data: self.data[yi:yi+1]})
         np.allclose(score, score_real)
         
+
 
     @unittest.skip('')
     def test_get_opt_alpha(self):
