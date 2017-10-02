@@ -122,8 +122,8 @@ class KernelNetModel:
         dfdx = tf.einsum('jk,kj'+input_idx+'->j'+input_idx,
                         dfdy, dydx)
 
-        d2fdx2 = tf.einsum('jkl,klj'+input_idx + '->j'+input_idx, 
-                            d2fdy2, dydx[None,...] * dydx[:,None,...]) + \
+        d2fdx2 = tf.einsum('jkl,kj'+input_idx + ',lj' + input_idx + '->j'+input_idx, 
+                            d2fdy2, dydx, dydx)+\
                  tf.einsum('jk,kj'+input_idx + '->j'+input_idx, 
                             dfdy, d2ydx2)
 
@@ -149,8 +149,8 @@ class KernelNetModel:
         dfdx = tf.einsum('jk,kj'+input_idx+'->j'+input_idx,
                         dfdy, dydx)
 
-        d2fdx2 = tf.einsum('jkl,klj'+input_idx + '->j'+input_idx, 
-                            d2fdy2, dydx[None,...] * dydx[:,None,...])
+        d2fdx2 = tf.einsum('jkl,kj'+input_idx + ',lj' + input_idx + '->j'+input_idx, 
+                            d2fdy2, dydx, dydx)
 
         score = tf.reduce_sum(d2fdx2 + 0.5 * dfdx**2)
         score += lam * self.network.get_param_size()
@@ -304,21 +304,48 @@ class KernelNetMSD:
     def __init__(self, kernel, network):
         
         self.batch_size = network.batch_size
-        self.ndim       = kernel.ndim
+        self.ndim       = network.ndim_out
         self.ndim_in    = network.ndim_in
         self.network    = network
         assert self.ndim == self.network.ndim_out
         self.kernel  = kernel
 
-    def MSD(self, model):
+    def _construct_index(self):
+        ''' construct string for use in tf.einsum as it does not support...'''
+        return ''.join([str(unichr(i+115)) for i in range(len(self.ndim_in))])
 
-        z1 = tf.placeholder('float32', shape = (self.batch_size,) + self.ndim_in)
-        z2 = tf.placeholder('float32', shape = (self.batch_size,) + self.ndim_in)
+    def MSD_V(self):
 
+        dp_dx = tf.placeholder('float32', shape = (self.batch_size,) + self.ndim_in)
+        dp_dy = tf.placeholder('float32', shape = (self.batch_size,) + self.ndim_in)
 
+        dZX_dX, ZX, X = self.network.get_grad_data()
+        dZY_dY, ZY, Y = self.network.get_grad_data()
 
-        dfdy, _   = self.kernel.get_grad(y)
-        d2fdy2, _ = self.kernel.get_hess(y)
+        dk_dZX, dk_dZY, d2k_dZXdZY, gram  = self.kernel.get_two_grad_cross_hess(ZX, ZY)
+        
+        input_idx = self._construct_index()
+
+        dk_dX = tf.einsum('ijk,ki'+input_idx+'->ij'+input_idx,
+                        dk_dZX, dZX_dX)
+        dk_dY = tf.einsum('ijk,kj'+input_idx+'->ij'+input_idx,
+                        dk_dZY, dZY_dY)
+        d2k_dXdY = tf.einsum('ijkl,ki' + input_idx + ',lj'+input_idx + '->ij'+input_idx, d2k_dZXdZY, dZX_dX, dZY_dY)
+        print d2k_dZXdZY
+        print dZX_dX
+        print dZY_dY
+        print d2k_dXdY 
+        h = tf.einsum('i'+input_idx +  ',j'+input_idx + '->ij', dp_dx, dp_dy) * gram + \
+            tf.einsum('j'+input_idx + ',ij'+input_idx + '->ij', dp_dy, dk_dX) + \
+            tf.einsum('i'+input_idx + ',ij'+input_idx + '->ij', dp_dx, dk_dY) + \
+            tf.reduce_sum(d2k_dXdY, range(2,len(self.ndim_in)+2))
+
+        print h
+
+        h = tf.reduce_sum(h)
+        print h
+        return h
+
 
         
 
@@ -345,11 +372,13 @@ class GaussianKernel:
 
 
     def get_pdist2(self, X, Y):
+
         
         if X.shape.ndims==1:
             X = X[None,:]
         if Y.shape.ndims==1:
             Y = Y[None,:]
+        assert X.shape[1] == Y.shape[1]
         pdist2 = tf.reduce_sum(X**2, axis=1, keep_dims=True)
         pdist2 -= 2.0*tf.matmul(X, Y, transpose_b = True)
         pdist2 += tf.matrix_transpose(tf.reduce_sum(Y**2, axis=1, keep_dims=True))
@@ -397,7 +426,7 @@ class GaussianKernel:
     def get_grad_hess(self, X, Y):
 
         '''
-        compute the first and second derivatives using one computation of gram matrix
+        compute the first and second derivatives using one computation of gram matrix 
         '''
 
         gram = self.get_gram_matrix(X, Y)
@@ -416,6 +445,28 @@ class GaussianKernel:
         K2 = gram[:,:,None,None] * (D2 - I)
 
         return K1, K2
+
+    def get_two_grad_cross_hess(self, X, Y):
+        '''
+        compute the derivatives of d2k/dx_idy_j, used for MSD
+        and also the derivatives w.r.t x and y
+        '''
+
+        gram = self.get_gram_matrix(X, Y)
+        
+        D = (tf.expand_dims(X, 1) - tf.expand_dims(Y, 0))/self.sigma
+        # dk_dy
+        K2 = (gram[:,:,None] * D)
+        # dk_dx
+        K1 = -K2
+
+        D2 = tf.einsum('ijk,ijl->ijkl', D, D)
+        I  = tf.eye( D.shape[-1].value )/self.sigma
+
+        K3 = gram[:,:,None,None] * (I - D2)
+        return K1, K2, K3, gram
+        
+
 
 # =====================            
 # Network related
@@ -801,7 +852,7 @@ class LinearReLUNetwork(Network):
     ''' y =  ReLU( W \cdot x + b ) '''
 
     def __init__(self, ndim_in, ndim_out, batch_size = 2, 
-                init_std = 1.0, init_mean = 1.0, 
+                init_std = 1.0, init_mean = 0.0, 
                 grads = [0.0, 1.0]):
         
         self.ndim_out  = ndim_out

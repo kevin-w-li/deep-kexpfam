@@ -13,7 +13,7 @@ class test_GaussianKernel(unittest.TestCase):
     ny  = 3
 
     def setUp(self):
-        self.kernel = GaussianKernel(self.ndim, sigma=3.2)
+        self.kernel = GaussianKernel(self.ndim, sigma=1.2)
         self.X = tf.constant(np.random.randn(self.nx, self.ndim).astype('float32'))
         self.Y = tf.constant(np.random.randn(self.ny, self.ndim).astype('float32'))
 
@@ -74,6 +74,40 @@ class test_GaussianKernel(unittest.TestCase):
         assert np.allclose(grad, grad_real), np.linalg.norm(grad_real-grad)
         assert np.allclose(hess, hess_real), np.linalg.norm(hess_real-hess)
 
+    def test_get_two_grad_cross_hess(self):
+            
+        dk_dx, dk_dy, d2k_dxdy, _ = self.kernel.get_two_grad_cross_hess(self.X, self.Y)
+        d2k_dxdy = d2k_dxdy.eval()
+        dk_dx = dk_dx.eval()
+        dk_dy = dk_dy.eval()
+
+        d2k_dxdy_real = np.empty(d2k_dxdy.shape)
+        dk_dx_real = np.empty(dk_dx.shape)
+        dk_dy_real = np.empty(dk_dy.shape)
+
+        # For each pair of x and y vectors, compute the entry of sum_i d2k/dx_1dy_1
+        for xi in range(self.nx):
+
+            this_x = self.X[xi]
+
+            for yi in range(self.ny):
+
+                this_y = self.Y[yi]
+                
+                gram = self.kernel.get_gram_matrix(this_x, this_y)
+                
+                this_dk_dx = tf.gradients(gram, this_x)[0]
+                dk_dx_real[xi, yi] = this_dk_dx.eval()
+                this_dk_dy = tf.gradients(gram, this_y)[0]
+                dk_dy_real[xi, yi] = this_dk_dy.eval()
+                
+                # loop over ndim to get cross gradients
+                for di in range(self.ndim):
+                    d2k_dxdy_real[xi, yi, di] = tf.gradients(this_dk_dx[di], this_y)[0].eval()
+
+        assert np.allclose(d2k_dxdy, d2k_dxdy_real)
+        assert np.allclose(dk_dy, dk_dy_real)
+        assert np.allclose(dk_dx, dk_dx_real)
 
 
 @unittest.skip('does not work yet')
@@ -280,7 +314,7 @@ class test_SquareNetwork(unittest.TestCase):
         
         assert np.allclose(sec_data_real, sec_data)
 
-# @unittest.skip('does not work yet')
+@unittest.skip('does not work yet')
 class test_LinearReLUNetwork(unittest.TestCase):
     
     ndim_in = (10,)
@@ -487,7 +521,7 @@ class test_ConvNetwork(unittest.TestCase):
         print 'second derivative: %d data took %.3f sec' % (ninput, time.time()-t0)
 
 
-# @unittest.skip('')
+@unittest.skip('')
 class test_KernelNetModel(unittest.TestCase):
 
     ndata  = 10
@@ -656,5 +690,37 @@ class test_KernelNetModel(unittest.TestCase):
         alpha_value, opt_score_value = \
                     self.sess.run([alpha, opt_score], feed_dict={points: self.points, data: self.data})
         print 'alpha, opt_score: ', opt_score_value
+
+class test_KernelNetMSD(unittest.TestCase):
+
+    ndata  = 10
+    ndim_in = (6,)
+    nfil = 5
+    ndim    = 5
+
+    def setUp(self):
+        
+
+        # fake data
+        self.data =   np.random.randn(self.ndata, *self.ndim_in).astype('float32')
+        self.data_tensor    =   tf.constant(self.data)
+        
+        # build network
+        network = LinearNetwork(self.ndim_in, self.ndim, batch_size = self.ndata)
+        # network = ConvNetwork(self.ndim_in, self.nfil, self.ndim_in[-1],
+        #                            batch_size = self.ndata)
+
+        kernel = GaussianKernel(network.ndim_out)
+
+        # setup lite model
+        self.MSD = KernelNetMSD(kernel, network)
+        
+        # compute and store the features 
+        init = tf.global_variables_initializer()
+        self.sess = tf.InteractiveSession()
+        self.sess.run(init)
+
+    def test_MSD_V(self):
+        self.MSD.MSD_V()
 
 unittest.main()
