@@ -34,7 +34,7 @@ class KernelNetModel:
         
         self.alpha   = alpha
         self.npoint = alpha.shape[0].value
-        self.ndim   = network.ndim_out
+        self.ndim   = network.ndim_out[0]
         self.ndim_in= network.ndim_in
         self.network = network
         self.kernel  = kernel
@@ -148,7 +148,7 @@ class KernelNetModel:
 
         dfdx = tf.einsum('jk,kj'+input_idx+'->j'+input_idx,
                         dfdy, dydx)
-
+        
         d2fdx2 = tf.einsum('jkl,kj'+input_idx + ',lj' + input_idx + '->j'+input_idx, 
                             d2fdy2, dydx, dydx)
 
@@ -282,6 +282,7 @@ class KernelNetModel:
         npoint = self.npoint
         Y = self._process_data(data)
         b, C = self._kernel_score_stats(Y)
+        print C.eval()
        
         alpha_hat =  -self.kernel.sigma * \
                         tf.matrix_solve( C, tf.expand_dims(b,-1) )
@@ -304,10 +305,10 @@ class KernelNetMSD:
     def __init__(self, kernel, network):
         
         self.batch_size = network.batch_size
-        self.ndim       = network.ndim_out
+        self.ndim       = network.ndim_out[0]
         self.ndim_in    = network.ndim_in
         self.network    = network
-        assert self.ndim == self.network.ndim_out
+        assert self.ndim == self.network.ndim_out[0]
         self.kernel  = kernel
 
     def _construct_index(self):
@@ -331,20 +332,13 @@ class KernelNetMSD:
         dk_dY = tf.einsum('ijk,kj'+input_idx+'->ij'+input_idx,
                         dk_dZY, dZY_dY)
         d2k_dXdY = tf.einsum('ijkl,ki' + input_idx + ',lj'+input_idx + '->ij'+input_idx, d2k_dZXdZY, dZX_dX, dZY_dY)
-        print d2k_dZXdZY
-        print dZX_dX
-        print dZY_dY
-        print d2k_dXdY 
         h = tf.einsum('i'+input_idx +  ',j'+input_idx + '->ij', dp_dx, dp_dy) * gram + \
             tf.einsum('j'+input_idx + ',ij'+input_idx + '->ij', dp_dy, dk_dX) + \
             tf.einsum('i'+input_idx + ',ij'+input_idx + '->ij', dp_dx, dk_dY) + \
             tf.reduce_sum(d2k_dXdY, range(2,len(self.ndim_in)+2))
 
-        print h
-
-        h = tf.reduce_sum(h)
-        print h
-        return h
+        h = tf.reduce_sum(h) / self.batch_size **2
+        return h, X, Y, dp_dx, dp_dy
 
 
         
@@ -497,20 +491,20 @@ class SumOutputNet:
         # parameters are duplicated (not copied in memory) to facilitate parallel gradient over input batch
         # it creates different symbols that points to the same parameters via the tf.identity function
         # each copy of the parameter will be paired with a single input data for forward computation
+        '''
         self.param_copy = [OrderedDict(
                         zip( net.param.keys(), 
                              [tf.identity(v) for v in net.param.values()]
                            )
                     ) for _ in xrange(net.batch_size)]
-
+        '''
         # create input placeholder that has batch_size
         self.batch = tf.placeholder(tf.float32, shape = (net.batch_size,) + net.ndim_in)
         # split it into different symbols to be paired with parameter copies
         self.batch_split = tf.split(self.batch, net.batch_size, axis = 0)
 
         # output for each data
-        self.output = [ net.forward_tensor(one_data[0],param=p) 
-                            for (one_data, p) in zip(self.batch_split,  self.param_copy) ]
+        self.output = net.forward_tensor(self.batch) 
 
         # sum the output over batch sum_output[i] = sum_j y_i(x_j)
         self.sum_output = tf.reduce_sum(self.output, axis=0)
@@ -584,65 +578,66 @@ class Network:
         ''' Output of the network given data array as tf.Tensor '''
         raise NotImplementedError('should implement in individual networks')
 
-    def get_grad_param(self, data):
+    
+    #def get_grad_param(self, data):
 
-        ''' Compute the derivative of each output to all the parameters
-            and store in dictionary, also return network output
+    #    ''' Compute the derivative of each output to all the parameters
+    #        and store in dictionary, also return network output
 
-            data:   numpy array
-            return: grad_value_dict{param_name=>gradients of shape (ndim_out, ninput, param.shape)}
-                    network output of shape (ninput, ndim_out)
-        '''
+    #        data:   numpy array
+    #        return: grad_value_dict{param_name=>gradients of shape (ndim_out, ninput, param.shape)}
+    #                network output of shape (ninput, ndim_out)
+    #    '''
 
-        # reshape data to see if there is a single input
-        data, single   = self.reshape_data_array(data)
-        ninput = data.shape[0]
-        # number of batches
-        nbatch = ninput/self.batch_size
+    #    # reshape data to see if there is a single input
+    #    data, single   = self.reshape_data_array(data)
+    #    ninput = data.shape[0]
+    #    # number of batches
+    #    nbatch = ninput/self.batch_size
 
-        son = SumOutputNet(self)
-        
-        # rearrange the parameter handles into a single array so tf.gradients can consume. It is arrange like:
-        #         [ w_1_copy1, w_1_copy_2, w_1_copy_3, ..., w_nparam_copy_batch_size ]
-        batch_param = [ son.param_copy[i][k] for k in self.param.keys() for i in xrange(self.batch_size) ]
+    #    son = SumOutputNet(self)
+    #    
+    #    # rearrange the parameter handles into a single array so tf.gradients can consume. It is arrange like:
+    #    #         [ w_1_copy1, w_1_copy_2, w_1_copy_3, ..., w_nparam_copy_batch_size ]
+    #    batch_param = [ son.param_copy[i][k] for k in self.param.keys() for i in xrange(self.batch_size) ]
 
-        # grad will be arranged by [ ndim_out [len(batch_param)] ]
-        grad   = [ list(tf.gradients(son.sum_output[oi], batch_param)) for oi in xrange(self.ndim_out)]
+    #    # grad will be arranged by [ ndim_out [len(batch_param)] ]
+    #    grad   = [ list(tf.gradients(son.sum_output[oi], batch_param)) for oi in xrange(self.ndim_out)]
 
-        # results stores grad over multiple batches
-        results = []
-        sess = tf.Session()
-        init = tf.global_variables_initializer()
-        sess.run(init)
+    #    # results stores grad over multiple batches
+    #    results = []
+    #    sess = tf.Session()
+    #    init = tf.global_variables_initializer()
+    #    sess.run(init)
 
-        for bi in xrange(nbatch):
-            # get a batch
-            batch_data = data[bi*self.batch_size:(bi+1)*self.batch_size]
-            # run and append results, the first argument is [[w_1_copies], [w_2_copies], network output]
-            results.append(sess.run(grad + [son.output], feed_dict = {son.batch : batch_data}))
+    #    for bi in xrange(nbatch):
+    #        # get a batch
+    #        batch_data = data[bi*self.batch_size:(bi+1)*self.batch_size]
+    #        # run and append results, the first argument is [[w_1_copies], [w_2_copies], network output]
+    #        results.append(sess.run(grad + [son.output], feed_dict = {son.batch : batch_data}))
 
-        # create output dictionary what will be indexed by parameter name.
-        # grad_value_dict[parameter_name][output_idx][input_idx][param_dims]
-        grad_value_dict = OrderedDict.fromkeys(self.param.keys())
-       
-        # results are arranged as follows
-        # results   [batch_idx  [  [output [param_1_copy_1, param_1_copy_2, ... param_nparam_copy_nbatch]],
-        #                           networkoutput
-        #                       ]
-        #           ]
-        # first fix a k, then form an array of [ndim_out x batch_size*nbatch]
-        for ki, k in enumerate(self.param.keys()):
-            grad_k = np.array([      
-                        np.concatenate([
-                            results[bi][oi][ki*self.batch_size : (ki+1)*self.batch_size ] for bi in xrange(nbatch)
-                        ]) for oi in xrange(self.ndim_out)
-                     ])
-            grad_value_dict[k] = grad_k
+    #    # create output dictionary what will be indexed by parameter name.
+    #    # grad_value_dict[parameter_name][output_idx][input_idx][param_dims]
+    #    grad_value_dict = OrderedDict.fromkeys(self.param.keys())
+    #   
+    #    # results are arranged as follows
+    #    # results   [batch_idx  [  [output [param_1_copy_1, param_1_copy_2, ... param_nparam_copy_nbatch]],
+    #    #                           networkoutput
+    #    #                       ]
+    #    #           ]
+    #    # first fix a k, then form an array of [ndim_out x batch_size*nbatch]
+    #    for ki, k in enumerate(self.param.keys()):
+    #        grad_k = np.array([      
+    #                    np.concatenate([
+    #                        results[bi][oi][ki*self.batch_size : (ki+1)*self.batch_size ] for bi in xrange(nbatch)
+    #                    ]) for oi in xrange(self.ndim_out)
+    #                 ])
+    #        grad_value_dict[k] = grad_k
 
-        
-        # extract the output by using the last index of each batch
-        output_value = np.concatenate([results[bi][-1] for bi in xrange(nbatch)])
-        return grad_value_dict, output_value
+    #    
+    #    # extract the output by using the last index of each batch
+    #    output_value = np.concatenate([results[bi][-1] for bi in xrange(nbatch)])
+    #    return grad_value_dict, output_value
 
     def get_grad_data(self):
 
@@ -656,15 +651,15 @@ class Network:
         t0 = time.time()
         t1 = time.time()
         print 'building grad output'
-        for oi in xrange(self.ndim_out):
+        for oi in xrange(self.ndim_out[0]):
             g = tf.gradients(son.sum_output[oi], son.batch)[0]
             grad.append(g)
-            print '\r%3d out of %3d took %5.3f sec' % ( oi, self.ndim_out, time.time()-t1),
+            print '\r%3d out of %3d took %5.3f sec' % ( oi, self.ndim_out[0], time.time()-t1),
             ti = time.time()
         grad   = tf.stack(grad)
         print 'building grad output took %.3f sec' % (time.time() - t0)
 
-        return grad, tf.stack(son.output), son.batch
+        return grad, son.output, son.batch
 
     def get_sec_data(self):
 
@@ -674,20 +669,20 @@ class Network:
 
         son = SumOutputNet(self)
         # sum over batch again
-        grad = tf.stack([ tf.gradients(son.sum_output[oi], son.batch)[0] for oi in xrange(self.ndim_out)])
+        grad = tf.stack([ tf.gradients(son.sum_output[oi], son.batch)[0] for oi in xrange(self.ndim_out[0])])
 
         sec = []
 
         sum_grad = tf.reduce_sum(grad, 1)
-        g_flat = tf.reshape(sum_grad, [self.ndim_out, -1])
+        g_flat = tf.reshape(sum_grad, [self.ndim_out[0], -1])
 
         # this is the linear index for the input dimensions
         raveled_index = np.arange(np.prod(self.ndim_in)).astype('int32')
         unraveled_index = np.array(np.unravel_index(raveled_index, self.ndim_in))
 
-        for oi in xrange(self.ndim_out):
+        for oi in xrange(self.ndim_out[0]):
             t0 = time.time()
-            print 'building output %d out of %d' % (oi+1, self.ndim_out)
+            print 'building output %d out of %d' % (oi+1, self.ndim_out[0])
 
             # tf.gather_nd(A, idx) takes tensor A and return elements whose indices are specified in idx
             # like [A[i] for i in idx] 
@@ -711,8 +706,8 @@ class Network:
         sec_stack = tf.stack(sec)
         # make the output shape [ ndim_out, batch_size, prod(self.ndim_in) ]
         sec_stack = tf.transpose(sec_stack, perm=[0,2,1])
-        sec_stack = tf.reshape(sec_stack, (self.ndim_out, self.batch_size,) +  self.ndim_in)
-        return sec_stack, grad, tf.stack(son.output), son.batch
+        sec_stack = tf.reshape(sec_stack, (self.ndim_out[0], self.batch_size,) +  self.ndim_in)
+        return sec_stack, grad, son.output, son.batch
 
     @staticmethod
     def _grad_zero(f, x):
@@ -741,10 +736,9 @@ class LinearNetwork(Network):
         self.ndim_out  = ndim_out
         self.ndim_in = ndim_in
         self.batch_size = batch_size
-        W   = tf.Variable(init_mean + np.random.randn(ndim_out, *ndim_in).astype('float32'))*init_std
-        b   = tf.Variable(np.random.randn(1, ndim_out).astype('float32'))*init_std
+        W   = tf.Variable(init_mean + np.random.randn(ndim_out[0], *ndim_in).astype('float32'))*init_std
+        b   = tf.Variable(np.random.randn(1, ndim_out[0]).astype('float32'))*init_std
         self.param = OrderedDict([('W', W), ('b', b)])
-        self.out   = None
 
     def forward_array(self, data, param = None):
         
@@ -758,10 +752,10 @@ class LinearNetwork(Network):
         b = param['b']
         out = tf.matmul(data_tensor, W,  transpose_b = True)
         out += b
-        sess = tf.Session()
-        init = tf.global_variables_initializer()
-        sess.run(init)
-        out_value = sess.run(out, feed_dict={data_tensor: data})
+        with tf.Session() as sess:
+            init = tf.global_variables_initializer()
+            sess.run(init)
+            out_value = sess.run(out, feed_dict={data_tensor: data})
         if single:
             out_value = out_value[0]
         return out_value
@@ -805,10 +799,9 @@ class SquareNetwork(Network):
         self.ndim_out  = ndim_out
         self.ndim_in = ndim_in
         self.batch_size = batch_size
-        W     = tf.Variable(np.random.randn(ndim_out, *ndim_in).astype('float32'))
-        b      = tf.Variable(np.random.randn(1, ndim_out).astype('float32'))
+        W     = tf.Variable(np.random.randn(ndim_out[0], *ndim_in).astype('float32'))
+        b      = tf.Variable(np.random.randn(1, ndim_out[0]).astype('float32'))
         self.param = OrderedDict([('W', W), ('b', b)])
-        self.out   = None
 
     def forward_array(self, data, param = None):
         
@@ -823,10 +816,10 @@ class SquareNetwork(Network):
         out = tf.matmul(data_tensor, W,  transpose_b = True)
         out += b
         out = out ** 2.0
-        sess = tf.Session()
-        init = tf.global_variables_initializer()
-        sess.run(init)
-        out_value = sess.run(out, feed_dict={data_tensor: data})
+        with tf.Session() as sess:
+            init = tf.global_variables_initializer()
+            sess.run(init)
+            out_value = sess.run(out, feed_dict={data_tensor: data})
         if single:
             out_value = out_value[0]
         return out_value
@@ -853,16 +846,15 @@ class LinearReLUNetwork(Network):
 
     def __init__(self, ndim_in, ndim_out, batch_size = 2, 
                 init_std = 1.0, init_mean = 0.0, 
-                grads = [0.0, 1.0]):
+                lin_grads = [0.0, 1.0]):
         
         self.ndim_out  = ndim_out
         self.ndim_in = ndim_in
         self.batch_size = batch_size
-        W   = tf.Variable(init_mean + np.random.randn(ndim_out, *ndim_in).astype('float32'))*init_std
-        b   = tf.Variable(np.random.randn(1, ndim_out).astype('float32'))*init_std
-        self.grads = grads
+        W   = tf.Variable((init_mean + init_std*np.random.randn(ndim_out[0], *ndim_in)).astype('float32'))
+        b   = tf.Variable(np.zeros((1, ndim_out[0])).astype('float32'))
+        self.lin_grads = lin_grads
         self.param = OrderedDict([('W', W), ('b', b)])
-        self.out   = None
 
     def forward_array(self, data, param = None):
         
@@ -876,11 +868,11 @@ class LinearReLUNetwork(Network):
         b = param['b']
         out = tf.matmul(data_tensor, W,  transpose_b = True)
         out += b
-        out = tf.maximum(out*(self.grads[1]), out*(self.grads[0]))
-        sess = tf.Session()
-        init = tf.global_variables_initializer()
-        sess.run(init)
-        out_value = sess.run(out, feed_dict={data_tensor: data})
+        out = tf.maximum(out*(self.lin_grads[1]), out*(self.lin_grads[0]))
+        with tf.Session() as sess:
+            init = tf.global_variables_initializer()
+            sess.run(init)
+            out_value = sess.run(out, feed_dict={data_tensor: data})
         if single:
             out_value = out_value[0]
         return out_value
@@ -895,7 +887,7 @@ class LinearReLUNetwork(Network):
         b = param['b']
         out = tf.matmul(data, W,  transpose_b = True)
         out += b
-        out = tf.maximum(out * self.grads[1], out * self.grads[0])
+        out = tf.maximum(out * self.lin_grads[1], out * self.lin_grads[0])
 
         if single:
             out = out[0]
@@ -903,26 +895,32 @@ class LinearReLUNetwork(Network):
    
     def get_grad_data(self):
 
-        param = self.param
 
         # create input placeholder that has batch_size
         data = tf.placeholder(tf.float32, shape = (self.batch_size,) + self.ndim_in)
-        data, single = self.reshape_data_tensor(data)
-        W = param['W']
-        out =   self.forward_tensor(data, param)
-        out =   tf.maximum(out*(self.grads[1]), out*(self.grads[0]))
-        grad = (self.grads[1] * tf.cast(out > 0, 'float32' ) + \
-                self.grads[0] * tf.cast(out <=0, 'float32' )) [:,:,None] * \
-                W[None,:,:]
+        data, _ = self.reshape_data_tensor(data)
+        out =   self.forward_tensor(data, self.param)
+        grad = self.get_grad_input(data, out)
+
         grad = tf.transpose(grad, [1,0,2])
         return grad, out, data
 
+    def get_grad_input(self, i, o):
+
+        # create input placeholder that has batch_size
+        W = self.param['W']
+        grad = (self.lin_grads[1] * tf.cast(o > 0, 'float32' ) + \
+                self.lin_grads[0] * tf.cast(o <=0, 'float32' )) [:,:,None] * \
+                W[None,:,:]
+        return grad
   
 class ConvNetwork(Network):
 
     ''' one layer convolution network'''
 
-    def __init__(self, ndim_in, nfil, size, stride=1, batch_size = 2):
+    def __init__(self, ndim_in, nfil, size, stride=1, batch_size = 2, flatten=False, 
+                    init_std = 1.0, init_mean = 0.0, 
+                    lin_grads=[0.0,1.0]):
         
         self.ndim_in = ndim_in
         self.batch_size = batch_size
@@ -930,14 +928,23 @@ class ConvNetwork(Network):
         self.nfil    = nfil
         self.size    = size
         self.stride  = stride
+        self.flatten = flatten
+        self.lin_grads = lin_grads
 
-        self.ndim_out = (  (ndim_in[1] - size) / stride + 1) **2 * nfil
+        assert ndim_in[1] == ndim_in[2]
+        
+        self.size_out = (ndim_in[1]-size)/stride + 1
+        if flatten:
+            self.ndim_out = (( self.size_out ) **2 * nfil, )
+        else:
+            self.ndim_out = ( nfil, self.size_out, self.size_out )
 
-        W      = tf.Variable(np.random.randn( * ((self.size,self.size)+ndim_in[0:1] + (nfil,))).astype('float32'))
-        b      = tf.Variable(np.random.randn(self.ndim_out).astype('float32'))
+        W      = tf.Variable((init_mean+np.random.randn( * ((self.size,self.size) + ndim_in[0:1] + (nfil,)) ) * init_std).astype('float32'))
+        b      = tf.Variable((np.random.randn( * (1, nfil, self.size_out, self.size_out) ) * 0.0).astype('float32'))
         self.param = OrderedDict([('W', W), ('b', b)])
-        self.out   = None
-
+        
+                                                        
+    
     def forward_array(self, data, param = None):
         
         if param is None:
@@ -951,14 +958,15 @@ class ConvNetwork(Network):
 
         conv = tf.nn.conv2d(data_tensor, W,
                             [1,1]+[self.stride]*2, 'VALID', data_format='NCHW')
-        conv = tf.reshape(conv,[ndata,-1])
         conv = conv + b
-        out = tf.nn.relu(conv)
+        if self.flatten:
+            conv = tf.reshape(conv,[ndata,-1])
+        out = tf.maximum(conv * self.lin_grads[1], conv * self.lin_grads[0])
 
-        sess = tf.Session()
-        init = tf.global_variables_initializer()
-        sess.run(init)
-        out_value = sess.run(out, feed_dict={data_tensor: data})
+        with tf.Session() as sess:
+            init = tf.global_variables_initializer()
+            sess.run(init)
+            out_value = sess.run(out, feed_dict={data_tensor: data})
         if single:
             out_value = out_value[0]
         return out_value
@@ -975,12 +983,154 @@ class ConvNetwork(Network):
 
         conv = tf.nn.conv2d(data, W,
                             [1,1]+[self.stride]*2, 'VALID', data_format='NCHW')
-        conv = tf.reshape(conv,[ndata,-1])
-        conv = conv + b[None,:]
-        out = tf.nn.relu(conv)
+        conv = conv + b
+        out = tf.maximum(conv * self.lin_grads[1], conv * self.lin_grads[0])
+        if self.flatten:
+            out = tf.reshape(out,[ndata,-1])
 
         if single:
             out = out[0]
         return out
+    
+    ''' 
+    def get_grad_data(self):
 
+        assert self.flatten
+        data = tf.placeholder(tf.float32, shape = (self.batch_size,) + self.ndim_in)
+        data, _ = self.reshape_data_tensor(data)
+        out  =   self.forward_tensor(data, self.param)
+        grad = self.get_grad_input(data, out)
+
+        grad = tf.transpose(grad, [1,0,2,3,4])
+        return grad, out, data
+
+    def get_grad_input(self, i, o):
+
+        grad_temp = []
+        for c in range(self.nfil):
+            grad_temp_c = []
+            for i in range(self.size_out):
+                grad_temp_ci = []
+                for j in range(self.size_out):
+                    out_grad = np.zeros((1, self.nfil, self.size_out, self.size_out))
+                    out_grad[0,c,i,j]=1.0
+                    grad_temp_ci.append(tf.nn.conv2d_backprop_input( (1,)+self.ndim_in, 
+                                                                        self.param['W'],
+                                                                        out_grad,
+                                                                        (1,1,)+(self.stride,)*2,
+                                                                        'VALID',
+                                                                        data_format='NCHW',
+                                                                      )[0]
+                                        )
+                grad_temp_ci = tf.stack(grad_temp_ci)
+                grad_temp_c.append(grad_temp_ci)
+
+            grad_temp_c = tf.stack(grad_temp_c)
+            grad_temp.append(grad_temp_c)
+        
+        self.grad_temp = tf.stack(grad_temp)
+        if self.flatten:
+            self.grad_temp = tf.reshape(self.grad_temp, (-1,) + self.ndim_in)
+
+        # create input placeholder that has batch_size
+        grad = (self.lin_grads[1] * tf.cast(o > 0, 'float32' ) + \
+                self.lin_grads[0] * tf.cast(o <=0, 'float32' ))[...,None, None, None] * \
+                self.grad_temp[None,...]
+
+        return grad
+    ''' 
+
+class DeepNetwork(Network):
+    
+
+    def __init__(self, layers):
+        
+        self.nlayer = len(layers)
+        self.layers = layers 
+        self.ndim_out = layers[-1].ndim_out
+        self.ndim_in  = layers[0].ndim_in
+        self.batch_size = layers[0].batch_size
+        self.param = OrderedDict()
+        for li, l in enumerate(layers):
+            for lp in l.param:
+                self.param['layer'+str(li+1)+lp] = l.param[lp]
+        self._check_consistency(layers)
+    
+    def _check_consistency(self, layers):
+
+        nlayer = self.nlayer 
+
+        for li, l in enumerate(layers):
+            # check if all networks
+            assert isinstance(l, Network)
+
+            # check if input and output dimentions match
+            if li < nlayer-1:
+                if isinstance(l.ndim_out, tuple):
+                    assert layers[li+1].ndim_in == l.ndim_out
+                else:
+                    assert layers[li+1].ndim_in == (l.ndim_out,)
+
+            assert l.batch_size == self.batch_size
+
+            
+           
+    def forward_tensor(self, data):
+        
+        assert isinstance(data, tf.Tensor)
+        out = data
+        for l in self.layers:
+            out = l.forward_tensor(out)
+        return out
+
+    def forward_array(self, data, param=None):
+        
+        assert isinstance(data, np.ndarray)
+        out = data
+        for l in self.layers:
+            out = l.forward_array(out)
+        return out
+    
+    @staticmethod
+    def _construct_index(shape, offset='o'):
+        ''' construct string for use in tf.einsum as it does not support...'''
+        return ''.join([str(unichr(i+ord(offset))) for i in range(len(shape))])
+    '''
+    def get_grad_data(self):
+        
+        data = tf.placeholder(tf.float32, shape = (self.batch_size,) + self.ndim_in)
+
+        outs   = [None]*self.nlayer
+        ins    = [None]*self.nlayer
+        ins[0] = data
+        out  = data
+        for li, l in enumerate(self.layers):
+            out = l.forward_tensor(out)
+            if li < self.nlayer-1:
+                ins[li+1] = out
+            outs[li] = out
+
+        grad = self.layers[-1].get_grad_input(ins[-1], outs[-1])
+        for li, l in enumerate(self.layers[::-1]):
+
+            if li == 0: continue
+
+            li = self.nlayer-1-li
+
+            this_grad = l.get_grad_input(ins[li], outs[li])
+            output_idx = self._construct_index(l.ndim_out, 'k')
+            input_idx  = self._construct_index(l.ndim_in, 'p')
+            
+            print 'gradients: ',grad, this_grad
+            print 'ij'+output_idx+',i'+output_idx+input_idx+'->ij'+input_idx
+
+            grad = tf.einsum('ij'+output_idx+',i'+output_idx+input_idx+'->ij'+input_idx
+                            ,grad, this_grad)
+            print grad
+        
+        grad = tf.transpose(grad,[1,0,]+range(2,2+len(self.ndim_in)))
+
+        return grad, out, data
+    '''
+    
 
