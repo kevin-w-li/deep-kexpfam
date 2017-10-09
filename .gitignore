@@ -6,3 +6,4 @@ data/*
 Utils.pyc
 *.pyc
 figs/
+results/*
