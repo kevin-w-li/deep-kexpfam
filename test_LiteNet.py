@@ -4,7 +4,7 @@ import unittest
 import numpy as np
 import time
 
-unittest.skip('does not work yet')
+# unittest.skip('does not work yet')
 class test_GaussianKernel(unittest.TestCase):
 
 
@@ -111,7 +111,7 @@ class test_GaussianKernel(unittest.TestCase):
         assert np.allclose(dk_dx, dk_dx_real)
 
 
-@unittest.skip('does not work yet')
+# @unittest.skip('does not work yet')
 class test_LinearNetwork(unittest.TestCase):
     
     ndim_in = (3,)
@@ -203,7 +203,7 @@ class test_LinearNetwork(unittest.TestCase):
 
 
 
-@unittest.skip('does not work yet')
+# @unittest.skip('does not work yet')
 class test_SquareNetwork(unittest.TestCase):
     
     ndim_in = (5,)
@@ -319,7 +319,7 @@ class test_SquareNetwork(unittest.TestCase):
         assert np.allclose(sec_data_real, sec_data)
     '''    
 
-@unittest.skip('does not work yet')
+# @unittest.skip('does not work yet')
 class test_LinearReLUNetwork(unittest.TestCase):
     
     ndim_in = (10,)
@@ -421,7 +421,7 @@ class test_LinearReLUNetwork(unittest.TestCase):
         assert results.shape == (self.ndim_out[0], self.batch_size,) + self.ndim_in
     '''    
 
-@unittest.skip('not required')
+# @unittest.skip('not required')
 class test_DeepNetwork(unittest.TestCase):
     
     ndim_in = (1,8,8)
@@ -508,7 +508,7 @@ class test_DeepNetwork(unittest.TestCase):
 
 
 
-@unittest.skip('does not work yet')
+# @unittest.skip('does not work yet')
 class test_ConvNetwork(unittest.TestCase):
 
     '''
@@ -639,7 +639,7 @@ class test_ConvNetwork(unittest.TestCase):
 
 
 
-@unittest.skip('')
+# @unittest.skip('')
 class test_KernelNetModel(unittest.TestCase):
 
     ndata  = 10
@@ -811,40 +811,5 @@ class test_KernelNetModel(unittest.TestCase):
 
         assert np.allclose(score, score_real)
         
-
-
-
-# @unittest.skip('')
-class test_KernelNetMSD(unittest.TestCase):
-
-    ndata  = 10
-    ndim_in = (6,)
-    nfil = 5
-    ndim    = 5
-
-    def setUp(self):
-        
-
-        # fake data
-        self.data =   np.random.randn(self.ndata, *self.ndim_in).astype('float32')
-        self.data_tensor    =   tf.constant(self.data)
-        
-        # build network
-        network = LinearNetwork(self.ndim_in, (self.ndim,), batch_size = self.ndata)
-        # network = ConvNetwork(self.ndim_in, self.nfil, self.ndim_in[-1],
-        #                            batch_size = self.ndata)
-
-        kernel = GaussianKernel(network.ndim_out)
-
-        # setup lite model
-        self.MSD = KernelNetMSD(kernel, network)
-        
-        # compute and store the features 
-        init = tf.global_variables_initializer()
-        self.sess = tf.InteractiveSession()
-        self.sess.run(init)
-
-    def test_MSD_V(self):
-        self.MSD.MSD_V()
 
 unittest.main()
