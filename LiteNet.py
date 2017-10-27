@@ -8,6 +8,7 @@ import time
 # =====================            
 # Kernel related
 # =====================            
+
 class KernelNetModel:
     ''' A class that combines an ordinary kernel on the features
         extracted by a net
@@ -164,8 +165,8 @@ class KernelNetModel:
         points = tf.placeholder('float32', shape=(self.npoint,) + self.ndim_in)
         self.set_points(self._process_data(points))
         d2ydx2, dydx, y, data = self.network.get_sec_data()
-        _ , gradK = self.kernel.get_grad(y)
-        _ , hessK = self.kernel.get_hess(y)
+        gradK = self.kernel.get_grad(y)
+        hessK = self.kernel.get_hess(y)
 
         input_idx = self._construct_index()
 
@@ -310,6 +311,7 @@ class KernelNetMSD:
         self.network    = network
         assert self.ndim == self.network.ndim_out[0]
         self.kernel  = kernel
+        self.points   = None
 
     def _construct_index(self):
         ''' construct string for use in tf.einsum as it does not support...'''
@@ -340,8 +342,35 @@ class KernelNetMSD:
         h = tf.reduce_sum(h) / self.batch_size **2
         return h, X, Y, dp_dx, dp_dy
 
+    def FSSD(self, points):
 
+        dp_dx = tf.placeholder('float32', shape = (self.batch_size,) + self.ndim_in)
+        dp_dy = tf.placeholder('float32', shape = (self.batch_size,) + self.ndim_in)
+
+        dZX_dX, ZX, X = self.network.get_grad_data()
+        dZY_dY, ZY, Y = self.network.get_grad_data()
+
+        dk_dZX, gram  = self.kernel.get_grad_gram(ZX, points)
+        dk_dZY, gram  = self.kernel.get_grad_gram(ZY, points)
         
+        input_idx = self._construct_index()
+
+        dk_dX = tf.einsum('ijk,ki'+input_idx+'->ij'+input_idx,
+                        dk_dZX, dZX_dX)
+        dk_dY = tf.einsum('ijk,kj'+input_idx+'->ij'+input_idx,
+                        dk_dZY, dZY_dY)
+        d2k_dXdY = tf.einsum('ijkl,ki' + input_idx + ',lj'+input_idx + '->ij'+input_idx, d2k_dZXdZY, dZX_dX, dZY_dY)
+        h = tf.einsum('i'+input_idx +  ',j'+input_idx + '->ij', dp_dx, dp_dy) * gram + \
+            tf.einsum('j'+input_idx + ',ij'+input_idx + '->ij', dp_dy, dk_dX) + \
+            tf.einsum('i'+input_idx + ',ij'+input_idx + '->ij', dp_dx, dk_dY) + \
+            tf.reduce_sum(d2k_dXdY, range(2,len(self.ndim_in)+2))
+
+        h = tf.reduce_sum(h) / self.batch_size **2
+        return h, X, Y, dp_dx, dp_dy
+
+
+
+
 
 
 
@@ -390,6 +419,14 @@ class GaussianKernel:
     def get_grad(self, X, Y):
         ''' first derivative of the kernel on the second input, dk(x, y)/dy'''
 
+        K, _ = self.get_grad_gram(X, Y)
+
+        return K
+
+    def get_grad_gram(self, X, Y):
+
+        ''' first deriavtives and gram matrix, used for FSSD'''
+
         gram = self.get_gram_matrix(X, Y)[:,:,None]
 
         # D contrains the vector difference between pairs of x_m and y_i
@@ -399,7 +436,7 @@ class GaussianKernel:
         # K is a vector that has derivatives on all points
         K = (gram * D)
 
-        return K
+        return K, gram
         
     def get_hess(self, X, Y):
 
@@ -460,8 +497,6 @@ class GaussianKernel:
         K3 = gram[:,:,None,None] * (I - D2)
         return K1, K2, K3, gram
         
-
-
 # =====================            
 # Network related
 # =====================            
@@ -725,8 +760,6 @@ class Network:
             size += tf.reduce_sum(v**2.0) 
         return size 
 
-
-
 class LinearNetwork(Network):
 
     ''' y =  W \cdot x + b '''
@@ -788,7 +821,6 @@ class LinearNetwork(Network):
         grad = tf.tile(W[None,:,:], [self.batch_size, 1, 1])
         grad = tf.transpose(grad, [1,0,2])
         return grad, output, data
-
 
 class SquareNetwork(Network):
 
