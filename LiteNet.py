@@ -311,7 +311,7 @@ class KernelNetMSD:
         self.network    = network
         assert self.ndim == self.network.ndim_out[0]
         self.kernel  = kernel
-        self.points   = None
+        self.points  = None
 
     def _construct_index(self):
         ''' construct string for use in tf.einsum as it does not support...'''
