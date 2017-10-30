@@ -6,3 +6,4 @@ Utils.pyc
 *.pyc
 figs/
 results/*
+.ipynb_checkpoints/*
