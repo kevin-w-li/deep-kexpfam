@@ -5,6 +5,9 @@ import operator
 import itertools
 import time
 
+config = tf.ConfigProto()
+config.gpu_options.allow_growth=True
+
 # =====================            
 # Kernel related
 # =====================            
@@ -72,6 +75,12 @@ class KernelNetModel:
         gram = self.kernel.get_gram_matrix(self.X, Y)
 
         return tf.einsum('i,ij', self.alpha, gram)
+
+    def get_kernel_fun_norm(self):
+        
+        gram = self.kernel.get_gram_matrix(self.X, self.X)
+        return tf.einsum('i,ij,j', self.alpha, gram, self.alpha)
+
         
     def get_kernel_fun_grad(self, Y):
 
@@ -132,7 +141,7 @@ class KernelNetModel:
         return score, points, data
 
 
-    def linear_score(self, lam=0.0):
+    def linear_score(self, lam=0.0, lam2=0.0):
 
         '''
         The score that is applied to linear-ReLU networks such that
@@ -152,9 +161,13 @@ class KernelNetModel:
         d2fdx2 = tf.einsum('jkl,kj'+input_idx + ',lj' + input_idx + '->j'+input_idx, 
                             d2fdy2, dydx, dydx)
 
-        score = tf.reduce_sum(d2fdx2 + 0.5 * dfdx**2)
-        score += lam * self.network.get_param_size()
-        return score, points, data
+        s2 = tf.reduce_sum(d2fdx2)
+        s1 = tf.reduce_sum(0.5*dfdx**2)
+        # score = s1+s2+lam2*tf.reduce_sum(d2fdx2**2)
+        score  = (s1+s2) / self.network.batch_size
+        norm   =  self.get_kernel_fun_norm()
+        score += lam * norm
+        return score, points, data, s1, s2, norm
 
     def get_opt_alpha(self):
         ''' 
@@ -611,7 +624,7 @@ class Network:
 
         # results stores grad over multiple batches
         results = []
-        sess = tf.Session()
+        sess = tf.Session(config=config)
         init = tf.global_variables_initializer()
         sess.run(init)
 
@@ -758,7 +771,9 @@ class LinearNetwork(Network):
         b = param['b']
         out = tf.matmul(data_tensor, W,  transpose_b = True)
         out += b
-        sess = tf.Session()
+
+
+        sess = tf.Session(config=config)
         init = tf.global_variables_initializer()
         sess.run(init)
         out_value = sess.run(out, feed_dict={data_tensor: data})
@@ -823,7 +838,8 @@ class SquareNetwork(Network):
         out = tf.matmul(data_tensor, W,  transpose_b = True)
         out += b
         out = out ** 2.0
-        sess = tf.Session()
+        
+        sess = tf.Session(config=config)
         init = tf.global_variables_initializer()
         sess.run(init)
         out_value = sess.run(out, feed_dict={data_tensor: data})
@@ -877,7 +893,8 @@ class LinearReLUNetwork(Network):
         out = tf.matmul(data_tensor, W,  transpose_b = True)
         out += b
         out = tf.maximum(out*(self.grads[1]), out*(self.grads[0]))
-        sess = tf.Session()
+
+        sess = tf.Session(config=config)
         init = tf.global_variables_initializer()
         sess.run(init)
         out_value = sess.run(out, feed_dict={data_tensor: data})
@@ -955,7 +972,7 @@ class ConvNetwork(Network):
         conv = conv + b
         out = tf.nn.relu(conv)
 
-        sess = tf.Session()
+        sess = tf.Session(config=config)
         init = tf.global_variables_initializer()
         sess.run(init)
         out_value = sess.run(out, feed_dict={data_tensor: data})
