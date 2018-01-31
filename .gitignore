@@ -1,8 +1,9 @@
 # Add any directories, files, or patterns you don't want to be tracked by version control
 *.sw*
 data/*
-results/*
 *~
 Utils.pyc
 *.pyc
 figs/
+results/*
+.ipynb_checkpoints/*

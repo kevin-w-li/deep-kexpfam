@@ -4,7 +4,7 @@ import unittest
 import numpy as np
 import time
 
-# @unittest.skip('does not work yet')
+# unittest.skip('does not work yet')
 class test_GaussianKernel(unittest.TestCase):
 
 
@@ -13,7 +13,7 @@ class test_GaussianKernel(unittest.TestCase):
     ny  = 3
 
     def setUp(self):
-        self.kernel = GaussianKernel(self.ndim, sigma=1.2)
+        self.kernel = GaussianKernel(self.ndim, sigma=1000)
         self.X = tf.constant(np.random.randn(self.nx, self.ndim).astype('float32'))
         self.Y = tf.constant(np.random.randn(self.ny, self.ndim).astype('float32'))
 
@@ -42,6 +42,7 @@ class test_GaussianKernel(unittest.TestCase):
         for xi in range(self.nx):
             for yi in range(self.ny):
                    grad_real[xi, yi] = tf.stack(tf.gradients(gram[xi, yi], self.Y)[0][yi]).eval()
+
         assert np.allclose(grad, grad_real), np.linalg.norm(grad_real-grad)
            
     def test_get_hess(self):
@@ -110,11 +111,11 @@ class test_GaussianKernel(unittest.TestCase):
         assert np.allclose(dk_dx, dk_dx_real)
 
 
-@unittest.skip('does not work yet')
+# @unittest.skip('does not work yet')
 class test_LinearNetwork(unittest.TestCase):
     
     ndim_in = (3,)
-    ndim_out = 4
+    ndim_out = (4,)
     ndata  = 10
     batch_size = 5
 
@@ -149,10 +150,10 @@ class test_LinearNetwork(unittest.TestCase):
         grad_dict_true = OrderedDict.fromkeys(self.network.param)
         output_true    = self.network.forward_array(self.data)
         for k in grad_dict_true:
-            grad_dict_true[k] = np.zeros([self.network.ndim_out, self.ndata] + self.network.param[k].shape.dims)
+            grad_dict_true[k] = np.zeros([self.network.ndim_out[0], self.ndata] + self.network.param[k].shape.dims)
 
         for di in xrange(self.ndata):
-            for oi in xrange(self.network.ndim_out):
+            for oi in xrange(self.network.ndim_out[0]):
                 grad_dict_true['W'][oi, di, oi] = self.data[di]
                 grad_dict_true['b'][oi, di, 0, oi] = 1
 
@@ -177,13 +178,14 @@ class test_LinearNetwork(unittest.TestCase):
             results.append(self.sess.run(grad, feed_dict={feed: batch_data}))
         grad_data = np.concatenate(results, axis=1)
 
-        grad_data_real = np.empty((self.ndim_out, self.ndata) + self.ndim_in)
+        grad_data_real = np.empty(self.ndim_out + ( self.ndata, ) + self.ndim_in)
         W = self.network.param['W'].eval()
-        for oi in xrange(self.ndim_out):
+        for oi in xrange(self.ndim_out[0]):
             for di in xrange(self.ndata):
                 grad_data_real[oi, di] = W[oi]
         assert np.allclose(grad_data, grad_data_real)
 
+    '''
     def test_get_sec_data(self):
 
         data, single   = self.network.reshape_data_array(self.data)
@@ -196,15 +198,16 @@ class test_LinearNetwork(unittest.TestCase):
         batch_data = data[0:batch_size]
         results = self.sess.run(sec, feed_dict={feed: batch_data})
         assert results.prod() == 0
-        assert results.shape == (self.ndim_out, self.batch_size,) + self.ndim_in
+        assert results.shape == self.ndim_out + self.batch_size,) + self.ndim_in
+    '''
 
 
 
-@unittest.skip('does not work yet')
+# @unittest.skip('does not work yet')
 class test_SquareNetwork(unittest.TestCase):
     
     ndim_in = (5,)
-    ndim_out = 3
+    ndim_out = (3,)
     ndata  = 10
     batch_size = 1
 
@@ -241,10 +244,10 @@ class test_SquareNetwork(unittest.TestCase):
         grad_dict_true = OrderedDict.fromkeys(self.network.param)
         output_true    = self.network.forward_array(data)
         for k in grad_dict_true:
-            grad_dict_true[k] = np.zeros([self.network.ndim_out, self.ndata] + self.network.param[k].shape.dims)
+            grad_dict_true[k] = np.zeros([self.network.ndim_out[0], self.ndata] + self.network.param[k].shape.dims)
 
         lin = data.dot(W.T)+b
-        for oi in xrange(self.network.ndim_out):
+        for oi in xrange(self.network.ndim_out[0]):
             for di in xrange(self.ndata):
                 grad_dict_true['W'][oi, di, oi] = 2*lin[di, oi]*data[di]
                 grad_dict_true['b'][oi, di, 0, oi] = 2*lin[di, oi]
@@ -273,16 +276,17 @@ class test_SquareNetwork(unittest.TestCase):
         grad_data = np.concatenate(results, axis=1)
         
         # construct the real 
-        grad_data_real = np.empty((self.ndim_out, self.ndata) + self.ndim_in)
+        grad_data_real = np.empty((self.ndim_out[0], self.ndata) + self.ndim_in)
         W = self.network.param['W'].eval()
         b = self.network.param['b'].eval()
         lin = data.dot(W.T)+b
 
-        for oi in xrange(self.ndim_out):
+        for oi in xrange(self.ndim_out[0]):
             for di in xrange(self.ndata):
                     grad_data_real[oi, di] = 2*W[oi]*lin[di, oi]
         assert np.allclose(grad_data, grad_data_real)
 
+    '''    
     def test_get_sec_data(self):
         
 
@@ -304,21 +308,22 @@ class test_SquareNetwork(unittest.TestCase):
         sec_data = np.concatenate(results, axis=1)
 
         # construct the real 
-        sec_data_real = np.empty((self.ndim_out, self.ndata) + self.ndim_in)
+        sec_data_real = np.empty((self.ndim_out[0], self.ndata) + self.ndim_in)
         W = self.network.param['W'].eval()
         b = self.network.param['b'].eval()
         lin = data.dot(W.T)+b
 
-        for oi in xrange(self.ndim_out):
+        for oi in xrange(self.ndim_out[0]):
             sec_data_real[oi] = 2*W[oi]**2
         
         assert np.allclose(sec_data_real, sec_data)
+    '''    
 
-@unittest.skip('does not work yet')
+# @unittest.skip('does not work yet')
 class test_LinearReLUNetwork(unittest.TestCase):
     
     ndim_in = (10,)
-    ndim_out = 5
+    ndim_out =(5,)
     ndata  = 1000
     batch_size = 5
 
@@ -330,7 +335,7 @@ class test_LinearReLUNetwork(unittest.TestCase):
         
         # build network
         self.network = LinearReLUNetwork(self.ndim_in, self.ndim_out, 
-                                     batch_size = self.batch_size, grads=[0.05,1.0])
+                                     batch_size = self.batch_size, lin_grads=[0.2,1.0])
 
         self.sess = tf.InteractiveSession()
 
@@ -345,9 +350,15 @@ class test_LinearReLUNetwork(unittest.TestCase):
         b = self.network.param['b'].eval()
         data = self.data
         out_real = b + data.dot(W.T)
-        out_real = ((out_real>0)*self.network.grads[1] + (out_real<=0)*self.network.grads[0])*out_real
+        out_real = ((out_real>0)*self.network.lin_grads[1] + (out_real<=0)*self.network.lin_grads[0])*out_real
         assert np.allclose(out, out_real, atol=1e-4), np.max(np.sqrt((out-out_real)**2))
 
+    def test_forward_tensor(self):
+        out = self.network.forward_tensor(self.data_tensor).eval()
+        out_real = self.network.forward_array(self.data)
+        assert np.allclose(out, out_real, atol=1e-4), np.max(np.sqrt((out-out_real)**2))
+       
+    '''
     @unittest.skip('not required')
     def test_get_grad_param(self):
         grad_dict, output = self.network.get_grad_param(self.data)
@@ -364,6 +375,7 @@ class test_LinearReLUNetwork(unittest.TestCase):
         assert np.allclose(grad_dict_true['W'], grad_dict['W'])
         assert np.allclose(grad_dict_true['b'], grad_dict['b'])
         assert np.allclose(output_true, output)
+    '''
 
     def test_get_grad_data(self):
         
@@ -385,15 +397,15 @@ class test_LinearReLUNetwork(unittest.TestCase):
 
         output_true = self.network.forward_array(self.data)
 
-        grad_data_real = np.empty((self.ndim_out, self.ndata) + self.ndim_in)
+        grad_data_real = np.empty(self.ndim_out +( self.ndata, ) + self.ndim_in)
         W = self.network.param['W'].eval()
-        for oi in xrange(self.ndim_out):
+        for oi in xrange(self.ndim_out[0]):
             for di in xrange(self.ndata):
-                grad_data_real[oi, di] = W[oi] * ( (output_true[di, oi]>0 )*self.network.grads[1] +\
-                                                   (output_true[di, oi]<=0)*self.network.grads[0]) 
+                grad_data_real[oi, di] = W[oi] * ( (output_true[di, oi]>0 )*self.network.lin_grads[1] +\
+                                                   (output_true[di, oi]<=0)*self.network.lin_grads[0]) 
         assert np.allclose(grad_data, grad_data_real)
     
-    @unittest.skip('not required')
+    '''    
     def test_get_sec_data(self):
 
         data, single   = self.network.reshape_data_array(self.data)
@@ -406,9 +418,97 @@ class test_LinearReLUNetwork(unittest.TestCase):
         batch_data = data[0:batch_size]
         results = self.sess.run(sec, feed_dict={feed: batch_data})
         assert results.prod() == 0
-        assert results.shape == (self.ndim_out, self.batch_size,) + self.ndim_in
+        assert results.shape == (self.ndim_out[0], self.batch_size,) + self.ndim_in
+    '''    
 
-@unittest.skip('does not work yet')
+# @unittest.skip('not required')
+class test_DeepNetwork(unittest.TestCase):
+    
+    ndim_in = (1,8,8)
+    size_in  = 2
+    stride_in = 2
+    nfil_in = 3
+    
+    ndim_1 =  (3, 4, 4)
+    size_1  = 2
+    stride_1 = 2
+    nfil_1 = 5
+
+    ndim_2 =  (20,)
+
+    ndim_3 =  (3,)
+    ndim_out = (3,)
+
+    ndata  = 10
+    batch_size = 5
+
+    def setUp(self):
+        
+        # fake data and points
+        self.data =   np.random.randn(self.ndata, *self.ndim_in).astype('float32')
+        self.data_tensor = tf.constant(self.data)
+        
+        # build network
+        layer_1 = ConvNetwork(self.ndim_in, self.nfil_in, self.size_in, stride=self.stride_in,
+                                 batch_size = self.batch_size, lin_grads=[0.2,1.0], flatten=False)
+
+        layer_2 = ConvNetwork(self.ndim_1,  self.nfil_1,  self.size_1,  stride=self.stride_1,
+                                 batch_size = self.batch_size, lin_grads=[0.2,1.0], flatten=True)
+        # build network
+        layer_3 = LinearReLUNetwork(self.ndim_2, self.ndim_3, 
+                                     batch_size = self.batch_size, lin_grads=[0.2,1.0])
+        # build network
+        layer_4 = LinearReLUNetwork(self.ndim_3, self.ndim_out, 
+                                     batch_size = self.batch_size, lin_grads=[0.2,1.0])
+
+        self.network = DeepNetwork([layer_1, layer_2, layer_3, layer_4])
+
+        self.sess = tf.InteractiveSession()
+        init = tf.global_variables_initializer()
+        self.sess.run(init)
+
+    def test_forward_tensor(self):
+        
+        out = self.network.forward_tensor(self.data_tensor).eval()
+        out_real = self.network.forward_array(self.data)
+
+    def test_forward_data(self):
+        
+        out = self.network.forward_array(self.data)
+        
+        out_real = self.data
+        for l in self.network.layers:
+            out_real = l.forward_array(out_real)
+        
+        assert np.allclose(out, out_real), np.max(np.abs(out-out_real))
+
+    def test_get_grad_data(self):
+    
+        nbatch = self.ndata/self.batch_size
+        batch_size = self.batch_size
+
+        grad, out, data = self.network.get_grad_data()
+        grad_val = np.zeros((self.ndim_out[0], self.ndata,)+self.ndim_in)
+        t0 = time.time()
+        for bi in range(nbatch):
+        
+            grad_val[:, bi*batch_size : (bi+1)*batch_size, ...] = \
+                grad.eval({data:self.data[bi*batch_size:(bi+1)*batch_size]})
+        print 'get_grad: ', time.time()-t0
+
+        grad_real_val = np.zeros((self.ndim_out[0], self.ndata,)+self.ndim_in)
+        out = self.network.forward_tensor(self.data_tensor)
+        for di in range(self.ndata):
+            for oi in range(self.ndim_out[0]):
+                g = tf.gradients(out[di,oi], self.data_tensor)[0][di]
+                grad_real_val[oi, di] = g.eval() 
+
+        assert np.allclose(grad_real_val, grad_real_val)
+
+
+
+
+# @unittest.skip('does not work yet')
 class test_ConvNetwork(unittest.TestCase):
 
     '''
@@ -421,12 +521,13 @@ class test_ConvNetwork(unittest.TestCase):
         filter: nchannel x size x size x nfil 
     '''
     
-    ndim_in  = (1,4,4)
-    nfil     = 2
-    filter_size = 2
-    stride   = 2
-    ndata  = 4
-    batch_size = 2
+    ndim_in  = (1,10,10)
+    nfil     = 3
+    filter_size = 4
+    stride   = 3
+    ndata  = 10
+    batch_size = 5
+    flatten=True
 
     def setUp(self):
         
@@ -434,10 +535,12 @@ class test_ConvNetwork(unittest.TestCase):
         self.data =   np.random.randn(self.ndata, *self.ndim_in).astype('float32')
         self.data_tensor = tf.constant(self.data)
         self.size_out = (self.ndim_in[-1] - self.filter_size)/self.stride + 1
-        self.ndim_out = self.size_out ** 2 * self.nfil
         
         # build network
-        self.network = ConvNetwork(self.ndim_in, self.nfil, self.filter_size, self.stride, self.batch_size)
+        self.network = ConvNetwork( self.ndim_in, self.nfil, self.filter_size, 
+                                    self.stride, self.batch_size, flatten=self.flatten,
+                                    lin_grads = [0.2, 1.0])
+        self.ndim_out = self.network.ndim_out
         self.sess = tf.InteractiveSession()
         init = tf.global_variables_initializer()
         self.sess.run(init)
@@ -457,34 +560,45 @@ class test_ConvNetwork(unittest.TestCase):
                             i*self.stride:i*self.stride+self.filter_size,
                             j*self.stride:j*self.stride+self.filter_size]
                 output[:,:,i,j] = np.einsum('ikmn,jkmn->ij', patch, W)
-        output = output.reshape(self.ndata, -1)
+        
         output += b
-        output_true = np.maximum(0, output)
+        if self.network.flatten:
+            output = output.reshape(self.ndata, -1)
+        output_true = np.maximum(self.network.lin_grads[0] * output, self.network.lin_grads[1]*output)
         output = self.network.forward_array(self.data)
 
         assert np.allclose(output,  output_true, atol=1e-5), np.abs(output-output_true).max()
-
+    
+    @unittest.skipIf(flatten is False, 'skip test for non-flat conv output')
     def test_get_grad_data(self):
 
         # reshape data to see if there is a single input
-        data, single   = self.network.reshape_data_array(self.data)
+        data, _   = self.network.reshape_data_array(self.data)
         ninput = data.shape[0]
 
         # number of batches
         batch_size = self.network.batch_size
-        nbatch = ninput/self.network.batch_size
-        output_true    = self.network.forward_array(self.data)
+        nbatch = ninput/batch_size
         
-        # run the model
-        grad, _, feed= self.network.get_grad_data()
-        results = []
+        grad, out, data = self.network.get_grad_data()
+        grad_val = np.zeros((self.ndim_out + (self.ndata,)+self.ndim_in))
+
         t0 = time.time()
-        for bi in xrange(nbatch):
-            batch_data = data[bi*batch_size:(bi+1)*batch_size]
-            results.append(self.sess.run(grad, feed_dict={feed: batch_data}))
-        grad_data = np.concatenate(results, axis=1)
-        print 'computing gradient took %.3f' % (time.time() - t0)
-        assert grad_data.shape == (self.ndim_out, self.ndata, ) + self.ndim_in
+
+        for bi in range(nbatch):
+            grad_val[:, bi*batch_size : (bi+1)*batch_size, ...] = \
+                grad.eval({data:self.data[bi*batch_size:(bi+1)*batch_size]})
+        print 'get_grad: ', time.time()-t0
+        
+        grad_real_val = np.zeros(self.ndim_out + (self.ndata,) + self.ndim_in)
+        out = self.network.forward_tensor(self.data_tensor)
+        for di in range(self.ndata):
+            for oi in range(self.ndim_out[0]):
+                g = tf.gradients(out[di,oi], self.data_tensor)[0][di]
+                grad_real_val[oi, di] = g.eval() 
+
+        assert np.allclose(grad_val, grad_real_val)
+       
 
     @unittest.skip('derivatie w.r.t param not needed')
     def test_get_grad_param(self):
@@ -498,7 +612,8 @@ class test_ConvNetwork(unittest.TestCase):
                                         self.filter_size, self.filter_size, 
                                         self.ndim_in[0], self.nfil)
 
-    @unittest.skip('derivatie w.r.t param not needed')
+
+    '''
     def test_get_sec_data(self):
 
         # reshape data to see if there is a single input
@@ -520,15 +635,20 @@ class test_ConvNetwork(unittest.TestCase):
         sec_data = np.concatenate(results, axis=1)
         print 'second derivative: %d data took %.3f sec' % (ninput, time.time()-t0)
 
+    '''
 
-@unittest.skip('')
+
+
+# @unittest.skip('')
 class test_KernelNetModel(unittest.TestCase):
 
     ndata  = 10
-    ndim_in = (6,)
+    ndim_in = (3,7,7)
+    filter_size = 3
+    stride = 2
     nfil = 5
-    ndim    = 5
-    npoint = 3
+    ndim = 6
+    npoint = 5
 
     def setUp(self):
         
@@ -539,15 +659,15 @@ class test_KernelNetModel(unittest.TestCase):
         self.points = np.random.randn(self.npoint, *self.ndim_in).astype('float32')
         self.points_tensor  = tf.constant(self.points)
         
-        # build network
-        network = LinearNetwork(self.ndim_in, self.ndim, batch_size = self.ndata)
-        # network = ConvNetwork(self.ndim_in, self.nfil, self.ndim_in[-1],
-        #                            batch_size = self.ndata)
-
-        kernel = GaussianKernel(network.ndim_out)
+        ndim_1  = ( (self.ndim_in[-1] - self.filter_size)/self.stride + 1)**2 * self.nfil
+        layer_1 = ConvNetwork(self.ndim_in, self.nfil, self.filter_size, stride=self.stride,  batch_size = self.ndata, flatten=True, lin_grads = [0.3,1.0])
+        layer_2 = LinearReLUNetwork((ndim_1,), (self.ndim,), batch_size=self.ndata, lin_grads = [0.6,1.0])
+        network = DeepNetwork([layer_1])
 
         # setup lite model with fake alpha and points
+        kernel = GaussianKernel(network.ndim_out, 1000)
         alpha = tf.Variable( np.random.randn(self.npoint).astype('float32') )
+
         self.model = KernelNetModel(kernel, network, alpha)
         self.model.set_points( self.points_tensor )
         self.X = self.model.X
@@ -558,7 +678,7 @@ class test_KernelNetModel(unittest.TestCase):
 
         self.sess = tf.InteractiveSession()
         self.sess.run(init)
-
+    ''' 
     def test_original_score(self):
 
         score = self.model.kernel_score(self.data_tensor)
@@ -601,6 +721,13 @@ class test_KernelNetModel(unittest.TestCase):
 
         assert np.all(score_opt<=scores), (score_opt, min(scores))
 
+    def test_get_opt_alpha(self):
+        alpha, opt_score, points, data = self.model.get_opt_alpha()
+        alpha_value, opt_score_value = \
+                    self.sess.run([alpha, opt_score], feed_dict={points: self.points, data: self.data})
+        print 'alpha, opt_score: ', opt_score_value
+
+    ''' 
     def test_evaluate_kernel_fun(self):
         
         f = self.model.evaluate_kernel_fun(self.Y).eval()
@@ -613,6 +740,7 @@ class test_KernelNetModel(unittest.TestCase):
         for xi in range(self.npoint):
             for yi in range(self.ndata):
                 K_real[xi, yi] = np.exp(-np.sum((X_real[xi]-Y_real[yi])**2)/2.0/sigma) 
+
         f_real = self.model.alpha.eval().dot(K_real)
 
         assert np.allclose(f_real, f), np.linalg.norm(f_real - f)
@@ -663,7 +791,7 @@ class test_KernelNetModel(unittest.TestCase):
 
     def test_score(self):
 
-        score, points, data = self.model.score()
+        score, points, data = self.model.linear_score()
         feed_dict = {points : self.points,
                      data   : self.data}
         score = self.sess.run(score, feed_dict=feed_dict)
@@ -675,52 +803,13 @@ class test_KernelNetModel(unittest.TestCase):
         this_y    = self.model.network.forward_tensor(this_data)
         f = self.model.evaluate_kernel_fun(this_y)
         one_data_score = tf.reduce_sum(tf.diag_part(tf.hessians(f, this_data_flat)[0])) + \
-                         0.5 * tf.reduce_sum(tf.gradients(f, this_data_flat)[0])**2
+                         0.5 * tf.reduce_sum(tf.gradients(f, this_data_flat)[0]**2)
         for yi in range(self.ndata):
             score_real += one_data_score.eval({points:self.points,
                                   data:  self.data,
                                   this_data: self.data[yi:yi+1]})
-        np.allclose(score, score_real)
+
+        assert np.allclose(score, score_real)
         
-
-
-    @unittest.skip('')
-    def test_get_opt_alpha(self):
-        alpha, opt_score, points, data = self.model.get_opt_alpha()
-        alpha_value, opt_score_value = \
-                    self.sess.run([alpha, opt_score], feed_dict={points: self.points, data: self.data})
-        print 'alpha, opt_score: ', opt_score_value
-
-class test_KernelNetMSD(unittest.TestCase):
-
-    ndata  = 10
-    ndim_in = (6,)
-    nfil = 5
-    ndim    = 5
-
-    def setUp(self):
-        
-
-        # fake data
-        self.data =   np.random.randn(self.ndata, *self.ndim_in).astype('float32')
-        self.data_tensor    =   tf.constant(self.data)
-        
-        # build network
-        network = LinearNetwork(self.ndim_in, self.ndim, batch_size = self.ndata)
-        # network = ConvNetwork(self.ndim_in, self.nfil, self.ndim_in[-1],
-        #                            batch_size = self.ndata)
-
-        kernel = GaussianKernel(network.ndim_out)
-
-        # setup lite model
-        self.MSD = KernelNetMSD(kernel, network)
-        
-        # compute and store the features 
-        init = tf.global_variables_initializer()
-        self.sess = tf.InteractiveSession()
-        self.sess.run(init)
-
-    def test_MSD_V(self):
-        self.MSD.MSD_V()
 
 unittest.main()
