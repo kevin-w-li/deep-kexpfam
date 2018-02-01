@@ -141,17 +141,18 @@ class KernelNetModel:
         return score, points, data
 
 
-    def linear_score(self, lam=0.0, lam2=0.0):
+    def linear_score(self, points, lam=0.0, lam2=0.0):
 
         '''
         The score that is applied to linear-ReLU networks such that
         the second derivatives w.r.t input are zeros
         '''
 
-        points = tf.placeholder('float32', shape=(self.npoint,) + self.ndim_in)
+        points = tf.constant(points.astype("float32"))
         self.set_points(points)
         dydx, y, data = self.network.get_grad_data()
         dfdy, d2fdy2  = self.get_kernel_fun_grad_hess(y)
+        fv = self.evaluate_kernel_fun(y)
 
         input_idx = self._construct_index()
 
@@ -167,7 +168,7 @@ class KernelNetModel:
         score  = (s1+s2) / self.network.batch_size
         norm   =  self.get_kernel_fun_norm()
         score += lam * norm
-        return score, points, data, s1, s2, norm
+        return score, data, s1, s2, norm, fv
 
     def get_opt_alpha(self):
         ''' 
@@ -744,18 +745,21 @@ class Network:
         return size 
 
 
-
 class LinearNetwork(Network):
 
     ''' y =  W \cdot x + b '''
 
-    def __init__(self, ndim_in, ndim_out, batch_size = 2, init_std = 1.0, init_mean = 0.0):
+    def __init__(self, ndim_in, ndim_out, batch_size = 2, init_std = 1.0, init_mean = 0.0, identity=False):
         
         self.ndim_out  = ndim_out
         self.ndim_in = ndim_in
         self.batch_size = batch_size
-        W   = tf.Variable(init_mean + np.random.randn(ndim_out, *ndim_in).astype('float32'))*init_std
-        b   = tf.Variable(np.random.randn(1, ndim_out).astype('float32'))*init_std
+        if identity:
+            W   = tf.constant(eye(ndim_in).astype('float32'))
+            b   = tf.constant(zeros((1,ndim_in)).asype('floa32'))
+        else:
+            W   = tf.Variable(init_mean + np.random.randn(ndim_out, *ndim_in).astype('float32'))*init_std
+            b   = tf.Variable(np.random.randn(1, ndim_out).astype('float32'))*init_std
         self.param = OrderedDict([('W', W), ('b', b)])
         self.out   = None
 
@@ -999,5 +1003,4 @@ class ConvNetwork(Network):
         if single:
             out = out[0]
         return out
-
 
