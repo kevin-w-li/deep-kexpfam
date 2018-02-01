@@ -55,24 +55,24 @@ exp_param_str = '_'.join(( k+str(v) for k, v in exp_param_dict.items()))
 world_1 = World(world_shape)
 world_1.append(Rectangle([(world_dim-1)/2]*2, 5, 5))
 world_1.append(Rectangle([(world_dim-1)/2]*2, 3, 3))
-world_1.likelihood = Gaussian_Likelihood(1.0)
-world_1.potentials.append(Collision_Potential(000))
+world_1.likelihood = TLikelihood(0.5)
+world_1.potentials.append(CollisionPotential(000))
 world_1.finalize_model()
 
 # this is used for validation
 world_2 = World(world_shape)
 world_2.append(Rectangle([(world_dim-1)/2]*2, 5, 5))
 world_2.append(Rectangle([(world_dim-1)/2]*2, 3, 3))
-world_2.likelihood = Gaussian_Likelihood(1.0)
-world_2.potentials.append(Collision_Potential(-np.inf))
+world_2.likelihood = TLikelihood(0.5)
+world_2.potentials.append(CollisionPotential(-np.inf))
 world_2.finalize_model()
 
 # this is used for testing
 world_3 = World(world_shape)
 world_3.append(Rectangle([(world_dim-1)/2]*2, 5, 5))
 world_3.append(Rectangle([(world_dim-1)/2]*2, 3, 3))
-world_3.likelihood = Gaussian_Likelihood(1.0)
-world_3.potentials.append(Collision_Potential(000))
+world_3.likelihood = TLikelihood(0.5)
+world_3.potentials.append(CollisionPotential(000))
 world_3.finalize_model()
 
 print 'sample val'
