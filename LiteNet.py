@@ -117,14 +117,19 @@ class KernelNetModel:
         ''' construct string for use in tf.einsum as it does not support...'''
         return ''.join([str(unichr(i+115)) for i in range(len(self.ndim_in))])
 
-    def score(self, lam=0.0):
+    def score(self, points, lam=0.0, eval_points=None):
 
-        points = tf.placeholder('float32', shape=(self.npoint,) + self.ndim_in)
-
+        
+        points = tf.constant(points.astype("float32"))
         self.X = self._process_data(points)
-
         d2ydx2, dydx, y, data = self.network.get_sec_data()
         dfdy, d2fdy2   = self.get_kernel_fun_grad_hess(y)
+        if eval_points is not None:
+            eval_points = tf.constant(eval_points.astype("float32"))
+            eval_y = self.network.forward_tensor(eval_points)
+            fv = self.evaluate_kernel_fun(eval_y)
+        else:
+            fv = None
 
         input_idx = self._construct_index()
 
@@ -136,12 +141,16 @@ class KernelNetModel:
                  tf.einsum('jk,kj'+input_idx + '->j'+input_idx, 
                             dfdy, d2ydx2)
 
-        score = tf.reduce_sum(d2fdx2 + 0.5 * dfdx**2)
-        score += lam * self.network.get_param_size()
-        return score, points, data
+        s2 = tf.reduce_sum(d2fdx2)
+        s1 = tf.reduce_sum(0.5*dfdx**2)
+        # score = s1+s2+lam2*tf.reduce_sum(d2fdx2**2)
+        score  = (s1+s2) / self.network.batch_size
+        norm   =  self.get_kernel_fun_norm()
+        score += lam * norm
+        return score, data, s1, s2, norm, fv
 
 
-    def linear_score(self, points, lam=0.0, lam2=0.0):
+    def linear_score(self, points, lam=0.0, lam2=0.0, eval_points = None):
 
         '''
         The score that is applied to linear-ReLU networks such that
@@ -152,7 +161,12 @@ class KernelNetModel:
         self.set_points(points)
         dydx, y, data = self.network.get_grad_data()
         dfdy, d2fdy2  = self.get_kernel_fun_grad_hess(y)
-        fv = self.evaluate_kernel_fun(y)
+        if eval_points is not None:
+            eval_points = tf.constant(eval_points.astype("float32"))
+            eval_y = self.network.forward_tensor(eval_points)
+            fv = self.evaluate_kernel_fun(eval_y)
+        else:
+            fv = None
 
         input_idx = self._construct_index()
 
@@ -360,11 +374,6 @@ class KernelNetMSD:
         print h
         return h
 
-
-        
-
-
-
 class GaussianKernel:
 
     '''
@@ -381,8 +390,6 @@ class GaussianKernel:
             
         self.sigma = sigma
         self.pdist2 = None
-        self.grad   = None
-        self.hess   = None
 
 
     def get_pdist2(self, X, Y):
@@ -480,6 +487,104 @@ class GaussianKernel:
         K3 = gram[:,:,None,None] * (I - D2)
         return K1, K2, K3, gram
         
+
+class RationalQuadraticKernel:
+
+    def __init__(self, ndim, d, c=1):
+        
+        self.d = d
+        self.c = c
+
+    def get_inner(self, X, Y):
+        if X.shape.ndims==1:
+            X = X[None,:]
+        if Y.shape.ndims==1:
+            Y = Y[None,:]
+
+        inner = tf.matmul(X, Y, transpose_b=True)
+        return inner
+        
+    def get_gram_matrix(self, X, Y):
+        
+        inner = self.get_inner(X,Y)
+        return (inner+self.c)**self.d
+        
+    def get_grad(self, X, Y):
+
+        inner = self.get_inner(X,Y)[:,:,None]
+        return self.d * (inner+self.c)**(self.d-1) * X[:,None,:] 
+
+    def get_hess(self, X, Y):
+
+        if self.d == 1:
+            return tf.zeros((X.shape[0], Y.shape[0], Y.shape[1], Y.shape[1]))
+        else:
+            inner = self.get_inner(X,Y)[:,:,None,None]
+            return self.d*(self.d-1)*(inner+self.c)**(self.d-2) * (X[:,None,None,:]*X[:,None,:,None])
+
+    def get_grad_hess(self, X, Y):
+
+        inner = self.get_inner(X,Y)[:,:,None]
+        K1 = self.d * (inner+self.c)**(self.d-1) * X[:,None,:] 
+
+        if self.d == 1:
+            K2 = tf.zeros((X.shape[0], Y.shape[0], Y.shape[1], Y.shape[1]))
+        else:
+            inner = inner[:,:,:,None]
+            K2 = self.d*(self.d-1)*(inner+self.c)**(self.d-2) * (X[:,None,None,:] * X[:,None,:,None])
+
+        return K1, K2
+
+
+
+class PolynomialKernel:
+
+    def __init__(self, ndim, d, c=1):
+        
+        self.d = d
+        self.c = c
+
+    def get_inner(self, X, Y):
+        if X.shape.ndims==1:
+            X = X[None,:]
+        if Y.shape.ndims==1:
+            Y = Y[None,:]
+
+        inner = tf.matmul(X, Y, transpose_b=True)
+        return inner
+        
+    def get_gram_matrix(self, X, Y):
+        
+        inner = self.get_inner(X,Y)
+        return (inner+self.c)**self.d
+        
+    def get_grad(self, X, Y):
+
+        inner = self.get_inner(X,Y)[:,:,None]
+        return self.d * (inner+self.c)**(self.d-1) * X[:,None,:] 
+
+    def get_hess(self, X, Y):
+
+        if self.d == 1:
+            return tf.zeros((X.shape[0], Y.shape[0], Y.shape[1], Y.shape[1]))
+        else:
+            inner = self.get_inner(X,Y)[:,:,None,None]
+            return self.d*(self.d-1)*(inner+self.c)**(self.d-2) * (X[:,None,None,:]*X[:,None,:,None])
+
+    def get_grad_hess(self, X, Y):
+
+        inner = self.get_inner(X,Y)[:,:,None]
+        K1 = self.d * (inner+self.c)**(self.d-1) * X[:,None,:] 
+
+        if self.d == 1:
+            K2 = tf.zeros((X.shape[0], Y.shape[0], Y.shape[1], Y.shape[1]))
+        else:
+            inner = inner[:,:,:,None]
+            K2 = self.d*(self.d-1)*(inner+self.c)**(self.d-2) * (X[:,None,None,:] * X[:,None,:,None])
+
+        return K1, K2
+
+
 
 
 # =====================            
@@ -755,8 +860,8 @@ class LinearNetwork(Network):
         self.ndim_in = ndim_in
         self.batch_size = batch_size
         if identity:
-            W   = tf.constant(eye(ndim_in).astype('float32'))
-            b   = tf.constant(zeros((1,ndim_in)).asype('floa32'))
+            W   = tf.constant(np.eye(ndim_in[0]).astype('float32'))
+            b   = tf.constant(np.zeros((1,ndim_in[0])).astype('float32'))
         else:
             W   = tf.Variable(init_mean + np.random.randn(ndim_out, *ndim_in).astype('float32'))*init_std
             b   = tf.Variable(np.random.randn(1, ndim_out).astype('float32'))*init_std
@@ -878,8 +983,8 @@ class LinearReLUNetwork(Network):
         self.ndim_out  = ndim_out
         self.ndim_in = ndim_in
         self.batch_size = batch_size
-        W   = tf.Variable(init_mean + np.random.randn(ndim_out, *ndim_in).astype('float32'))*init_std
-        b   = tf.Variable(np.random.randn(1, ndim_out).astype('float32'))*init_std
+        W   = tf.Variable(init_mean + np.random.randn(*ndim_out + ndim_in).astype('float32'))*init_std
+        b   = tf.Variable(np.random.randn(1, *ndim_out).astype('float32'))*init_std
         self.grads = grads
         self.param = OrderedDict([('W', W), ('b', b)])
         self.out   = None
@@ -938,7 +1043,105 @@ class LinearReLUNetwork(Network):
         grad = tf.transpose(grad, [1,0,2])
         return grad, out, data
 
+class LinearSoftNetwork(Network):
+
+    ''' y =  ReLU( W \cdot x + b ) '''
+
+    def __init__(self, ndim_in, ndim_out, batch_size = 2, 
+                init_std = 1.0, init_mean = 0.0, 
+                #nl   = lambda x: tf.where(x<30, tf.nn.softplus(x), x),
+                #dnl  = lambda x: 1/(1+tf.exp(-x)),
+                #d2nl = lambda x: tf.where(tf.logical_and(-30<x, x<30), tf.exp(x-2*tf.log(1+tf.exp(x))), tf.zeros_like(x))):
+                nl   = tf.nn.softplus,
+                dnl  = lambda x: 1/(1+tf.exp(-x)),
+                d2nl = lambda x: tf.exp(x-2*tf.log(1+tf.exp(x)))):
+        
+        self.ndim_out  = ndim_out
+        self.ndim_in = ndim_in
+        self.batch_size = batch_size
+        W   = tf.Variable(init_mean + np.random.randn(ndim_out[0], *ndim_in).astype('float32'))*init_std
+        b   = tf.Variable(np.random.randn(1, ndim_out[0]).astype('float32'))*init_std
+
+        self.nl = nl
+        self.dnl = dnl
+        self.d2nl = d2nl
+
+        self.param = OrderedDict([('W', W), ('b', b)])
+
+    def forward_array(self, data, param = None):
+        
+        if param is None:
+            param = self.param
+        data, single = self.reshape_data_array(data)
+            
+        data_tensor  = tf.placeholder('float32', shape= (None, ) + self.ndim_in)
+
+        W = param['W']
+        b = param['b']
+        out = tf.matmul(data_tensor, W,  transpose_b = True)
+        out += b
+        out = self.nl(out)
+
+        sess = tf.Session(config=config)
+        init = tf.global_variables_initializer()
+        sess.run(init)
+        out_value = sess.run(out, feed_dict={data_tensor: data})
+        if single:
+            out_value = out_value[0]
+        return out_value
+
+    def forward_tensor(self, data, param = None):
+        
+        if param is None:
+            param = self.param
+        data, single = self.reshape_data_tensor(data)
+            
+        W = param['W']
+        b = param['b']
+        out = tf.matmul(data, W,  transpose_b = True)
+        out += b
+        out = self.nl(out)
+
+        if single:
+            out = out[0]
+        return out
+
+    def get_grad_data(self):
+
+        param = self.param
+
+        # create input placeholder that has batch_size
+        data = tf.placeholder(tf.float32, shape = (self.batch_size,) + self.ndim_in)
+        data, single = self.reshape_data_tensor(data)
+        W = param['W']
+        b = param['b']
+        lin_out = tf.matmul(data, W,  transpose_b = True) + b
+        out  = self.nl(lin_out)
+        grad = self.dnl(lin_out)[:,:,None] * W[None,:,:]
+        grad = tf.transpose(grad, [1,0,2])
+
+        return grad, out, data
   
+    def get_sec_data(self):
+
+        param = self.param
+
+        # create input placeholder that has batch_size
+        data = tf.placeholder(tf.float32, shape = (self.batch_size,) + self.ndim_in)
+        data, single = self.reshape_data_tensor(data)
+        W = param['W']
+        b = param['b']
+
+        lin_out = tf.matmul(data, W,  transpose_b = True) + b
+        out  = self.nl(lin_out)
+
+        grad = self.dnl(lin_out)[:,:,None] * W[None,:,:]
+        grad = tf.transpose(grad, [1,0,2])
+
+        sec = self.d2nl(lin_out)[:,:,None] * W[None,:,:]**2
+        sec = tf.transpose(sec, [1,0,2])
+        return sec, grad, out, data
+
 class ConvNetwork(Network):
 
     ''' one layer convolution network'''

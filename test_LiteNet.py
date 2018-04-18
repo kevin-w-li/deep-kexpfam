@@ -4,7 +4,77 @@ import unittest
 import numpy as np
 import time
 
-# unittest.skip('does not work yet')
+@unittest.skip('does not work yet')
+class test_PolynomialKernel(unittest.TestCase):
+
+
+    ndim = 4
+    nx = 2
+    ny  = 3
+
+    def setUp(self):
+        self.kernel = PolynomialKernel(self.ndim,2)
+        self.X = tf.constant(np.random.randn(self.nx, self.ndim).astype('float32'))
+        self.Y = tf.constant(np.random.randn(self.ny, self.ndim).astype('float32'))
+
+        init = tf.global_variables_initializer()
+        self.sess = tf.InteractiveSession()
+        self.sess.run(init)
+
+    def test_get_gram_matrix(self):
+        gram = self.kernel.get_gram_matrix(self.X, self.Y)
+        x = self.X.eval()
+        y = self.Y.eval()
+        res = gram.eval()
+
+        true_res = (np.dot(x, y.T) + self.kernel.c) ** self.kernel.d
+        assert np.allclose(res, true_res)
+
+    def test_get_grad(self):
+    
+        grad = self.kernel.get_grad(self.X, self.Y)
+        grad = grad.eval()
+
+        gram = self.kernel.get_gram_matrix(self.X, self.Y)
+        grad_real = np.empty((self.nx,self.ny, self.ndim))
+        
+        for xi in range(self.nx):
+            for yi in range(self.ny):
+                   grad_real[xi, yi] = tf.stack(tf.gradients(gram[xi, yi], self.Y)[0][yi]).eval()
+
+        assert np.allclose(grad, grad_real), np.linalg.norm(grad_real-grad)
+           
+    def test_get_hess(self):
+    
+        hess = self.kernel.get_hess(self.X, self.Y)
+        hess = hess.eval()
+
+        hess_real = np.empty((self.nx,self.ny, self.ndim, self.ndim))
+        
+        for xi in range(self.nx):
+            this_x = self.X[xi]
+            for yi in range(self.ny):
+                this_y = self.Y[yi]
+                gram = self.kernel.get_gram_matrix(this_x, this_y)
+                hess_real[xi, yi] = tf.hessians(gram, this_y)[0].eval()
+        assert np.allclose(hess, hess_real), np.linalg.norm(hess_real-hess)
+
+    def test_get_grad_hess(self):
+
+        grad, hess = self.kernel.get_grad_hess(self.X, self.Y)
+        grad = grad.eval()
+        hess = hess.eval()
+        
+        grad_real = self.kernel.get_grad(self.X, self.Y)
+        grad_real = grad_real.eval()
+
+        hess_real = self.kernel.get_hess(self.X, self.Y)
+        hess_real = hess_real.eval()
+
+        assert np.allclose(grad, grad_real), np.linalg.norm(grad_real-grad)
+        assert np.allclose(hess, hess_real), np.linalg.norm(hess_real-hess)
+
+#@unittest.skip('does not work yet')
 class test_GaussianKernel(unittest.TestCase):
 
 
@@ -111,7 +181,7 @@ class test_GaussianKernel(unittest.TestCase):
         assert np.allclose(dk_dx, dk_dx_real)
 
 
-# @unittest.skip('does not work yet')
+@unittest.skip('does not work yet')
 class test_LinearNetwork(unittest.TestCase):
     
     ndim_in = (3,)
@@ -203,7 +273,7 @@ class test_LinearNetwork(unittest.TestCase):
 
 
 
-# @unittest.skip('does not work yet')
+@unittest.skip('does not work yet')
 class test_SquareNetwork(unittest.TestCase):
     
     ndim_in = (5,)
@@ -319,7 +389,7 @@ class test_SquareNetwork(unittest.TestCase):
         assert np.allclose(sec_data_real, sec_data)
     '''    
 
-# @unittest.skip('does not work yet')
+@unittest.skip('does not work yet')
 class test_LinearReLUNetwork(unittest.TestCase):
     
     ndim_in = (10,)
@@ -420,8 +490,126 @@ class test_LinearReLUNetwork(unittest.TestCase):
         assert results.prod() == 0
         assert results.shape == (self.ndim_out[0], self.batch_size,) + self.ndim_in
     '''    
+# @unittest.skip('does not work yet')
+class test_LinearSoftNetwork(unittest.TestCase):
+    
+    ndim_in = (3,)
+    ndim_out =(2,)
+    ndata  = 5
+    batch_size = 5
 
-# @unittest.skip('not required')
+    def setUp(self):
+        
+        # fake data and points
+        self.data =   np.random.randn(self.ndata, *self.ndim_in).astype('float32')*1000
+        self.data_tensor = tf.constant(self.data)
+        
+        # build network
+        self.network = LinearSoftNetwork(self.ndim_in, self.ndim_out, 
+                                     batch_size = self.batch_size, init_std = 1)
+
+        self.sess = tf.InteractiveSession()
+
+        init = tf.global_variables_initializer()
+
+        self.sess.run(init)
+
+
+    def test_forward_array(self):
+        out = self.network.forward_array(self.data)
+        W = self.network.param['W'].eval()
+        b = self.network.param['b'].eval()
+        data = self.data
+        out_real = np.log(1+np.exp(b + data.dot(W.T)))
+        inf_idx = np.isinf(out_real)
+        out_real[inf_idx] = (b + data.dot(W.T))[inf_idx]
+        assert np.all(np.isfinite(out))
+        assert np.allclose(out, out_real, atol=1e-6), np.max(np.sqrt((out-out_real)**2))
+
+    def test_forward_tensor(self):
+        out = self.network.forward_tensor(self.data_tensor).eval()
+        out_real = self.network.forward_array(self.data)
+        assert np.allclose(out, out_real, atol=1e-6), np.max(np.sqrt((out-out_real)**2))
+       
+    '''
+    @unittest.skip('not required')
+    def test_get_grad_param(self):
+        grad_dict, output = self.network.get_grad_param(self.data)
+        grad_dict_true = OrderedDict.fromkeys(self.network.param)
+        output_true    = self.network.forward_array(self.data)
+        for k in grad_dict_true:
+            grad_dict_true[k] = np.zeros([self.network.ndim_out, self.ndata] + self.network.param[k].shape.dims)
+
+        for di in xrange(self.ndata):
+            for oi in xrange(self.network.ndim_out):
+                grad_dict_true['W'][oi, di, oi] = self.data[di] * (output[di,oi]>0)
+                grad_dict_true['b'][oi, di, 0, oi] = 1 * (output[di,oi]>0)
+
+        assert np.allclose(grad_dict_true['W'], grad_dict['W'])
+        assert np.allclose(grad_dict_true['b'], grad_dict['b'])
+        assert np.allclose(output_true, output)
+    '''
+
+    def test_get_grad_data(self):
+
+        data, single   = self.network.reshape_data_array(self.data)
+        ninput = data.shape[0]
+
+        # number of batches
+        batch_size = self.network.batch_size
+        nbatch = ninput/batch_size
+
+        grad, _, feed = self.network.get_grad_data()
+        grad_data = []
+        for bi in xrange(nbatch):
+            batch_data = data[bi*batch_size:(bi+1)*batch_size]
+            grad_data.append(self.sess.run(grad, feed_dict={feed: batch_data}))
+        grad_data = np.concatenate(grad_data, axis=1)
+
+        grad_real = np.empty((self.ndim_out + (self.ndata,) + self.ndim_in))
+
+        for di in range(self.data.shape[0]):
+
+            this_data = self.data_tensor[di]
+            out = self.network.forward_tensor(this_data)
+
+            for oi in xrange(self.ndim_out[0]):
+
+                g = tf.gradients(out[oi], this_data)[0].eval()
+                grad_real[oi, di, :] = g
+
+        assert np.all(np.isfinite(grad_data))
+        assert np.allclose(grad_data, grad_real), np.linalg.norm(grad_real-grad_data)
+
+    def test_get_sec_data(self):
+
+        data, single   = self.network.reshape_data_array(self.data)
+        ninput = data.shape[0]
+
+        # number of batches
+        batch_size = self.network.batch_size
+        nbatch = ninput/batch_size
+
+        sec, _, _, feed = self.network.get_sec_data()
+        sec_data = []
+        for bi in xrange(nbatch):
+            batch_data = data[bi*batch_size:(bi+1)*batch_size]
+            sec_data.append(self.sess.run(sec, feed_dict={feed: batch_data}))
+        sec_data = np.concatenate(sec_data, axis=1)
+
+        sec_real = np.empty((self.ndim_out + (self.ndata,) + self.ndim_in))
+        for oi in range(self.network.ndim_out[0]):
+            for di in range(self.data.shape[0]):
+
+                this_data = self.data_tensor[di]
+                out = self.network.forward_tensor(this_data)[oi,...]
+                sec = tf.hessians(out, this_data)[0].eval()
+                sec_real[oi, di, :] = np.diagonal(sec)
+
+        assert np.all(np.isfinite(sec_data))
+        assert np.allclose(sec_real, sec_data), np.linalg.norm(sec_real-sec_data)
+
+@unittest.skip('not required')
 class test_DeepNetwork(unittest.TestCase):
     
     ndim_in = (1,8,8)
@@ -508,7 +696,7 @@ class test_DeepNetwork(unittest.TestCase):
 
 
 
-# @unittest.skip('does not work yet')
+@unittest.skip('does not work yet')
 class test_ConvNetwork(unittest.TestCase):
 
     '''
@@ -639,7 +827,7 @@ class test_ConvNetwork(unittest.TestCase):
 
 
 
-# @unittest.skip('')
+@unittest.skip('')
 class test_KernelNetModel(unittest.TestCase):
 
     ndata  = 10
