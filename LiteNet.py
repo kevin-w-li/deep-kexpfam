@@ -55,6 +55,7 @@ class KernelNetModel:
             Input is a set of images that will first be processed by network
             These are stored inside the model as parameters
         '''
+        
         assert points.shape[1:] == self.ndim_in, 'input shape of points not the same as predefiend'
         self.X = self.network.forward_tensor(points)
 
@@ -76,6 +77,13 @@ class KernelNetModel:
 
         return tf.einsum('i,ij', self.alpha, gram)
 
+    def evaluate_fun(self,X):
+
+        eval_y = self.network.forward_tensor(X)
+        fv = self.evaluate_kernel_fun(eval_y)
+        return fv
+        
+
     def get_kernel_fun_norm(self):
         
         gram = self.kernel.get_gram_matrix(self.X, self.X)
@@ -92,10 +100,12 @@ class KernelNetModel:
         return grad, K
     
     def get_kernel_fun_hess(self, Y):
+
         '''
         gram matrix, multiplied by ( outer products of x_m - y_i, minus
                                      identity matrix of shape ndim x ndim)
         '''
+
         K = self.kernel.get_hess(self.X, Y)
         hess  = tf.reduce_sum(self.alpha[:,None, None, None] 
                                 * K, 0)
@@ -103,9 +113,11 @@ class KernelNetModel:
         return hess, K
 
     def get_kernel_fun_grad_hess(self, Y):
+
         '''
         compute the gradient and hessian using one computation of gram matrix
         '''
+
         K1, K2 = self.kernel.get_grad_hess(self.X, Y)
 
         grad = tf.reduce_sum(self.alpha[:,None, None] * K1, 0)
@@ -124,10 +136,9 @@ class KernelNetModel:
         self.X = self._process_data(points)
         d2ydx2, dydx, y, data = self.network.get_sec_data()
         dfdy, d2fdy2   = self.get_kernel_fun_grad_hess(y)
+
         if eval_points is not None:
-            eval_points = tf.constant(eval_points.astype("float32"))
-            eval_y = self.network.forward_tensor(eval_points)
-            fv = self.evaluate_kernel_fun(eval_y)
+            fv = self.evaluate_fun(eval_points)
         else:
             fv = None
 
@@ -150,6 +161,59 @@ class KernelNetModel:
         return score, data, s1, s2, norm, fv
 
 
+    def opt_score(self, points, lam=0.0, eval_points=None):
+
+        ''' 
+        This is used to get the optimal alpha
+        '''
+                                    
+        points = tf.constant(points.astype("float32"))
+        self.set_points(points)
+
+        d2ydx2, dydx, y, data = self.network.get_sec_data()
+        gradK, hessK = self.kernel.get_grad_hess(self.X, y)
+
+        if eval_points is not None:
+            fv = self.evaluate_fun(eval_points)
+        else:
+            fv = None
+
+        input_idx = self._construct_index()
+
+        dkdx = tf.einsum('ijk,kj'+input_idx+'->ij'+input_idx,
+                        gradK, dydx)
+
+        d2kdx2 = tf.einsum('ijkl,klj'+input_idx + '->ij'+input_idx, 
+                            hessK, dydx[None,...] * dydx[:,None,...]) + \
+                 tf.einsum('ijk,kj'+input_idx + '->ij'+input_idx, 
+                            gradK, d2ydx2)
+
+        H = tf.reduce_sum(tf.reduce_sum(d2kdx2,-1), -1)
+        G = tf.einsum('ik'+input_idx+',jk'+input_idx+'->ij',
+                      dkdx, dkdx)
+
+        s2 = tf.einsum('i,i->', self.alpha, H) / self.network.batch_size
+        s1 = 0.5 * tf.einsum('i,ij,j', self.alpha, G, self.alpha) / self.network.batch_size
+        score  =  s1+s2
+        norm   =  self.get_kernel_fun_norm()
+        score += lam * norm
+
+        gram = self.kernel.get_gram_matrix(self.X, self.X)
+        #alpha = tf.matrix_solve(G, -H[:,None])[:,0]
+        #alpha = tf.matrix_solve(G + gram*lam, -H[:,None])[:,0]
+        alpha = tf.matrix_solve(G + tf.eye(G.shape[0].value)*lam, -H[:,None])[:,0]
+        alpha_assign_opt = tf.assign(self.alpha, alpha)
+
+        return alpha_assign_opt, score, data, s1, s2, norm, fv
+        
+    ''' The following are methdos that compute the score of a model
+        using an ordinary kernel only, and commpute
+        the optimal coefficient of the kernel points[
+            Gradient-free Hamiltonian Monte Carlo with Efficient Kernel Exponential Families
+            Heiko Strathmann, Dino Sejdinovic, Samuel Livingstone, Zoltan Szabo, Arthur Gretton
+            ]
+    '''
+
     def linear_score(self, points, lam=0.0, lam2=0.0, eval_points = None):
 
         '''
@@ -162,9 +226,7 @@ class KernelNetModel:
         dydx, y, data = self.network.get_grad_data()
         dfdy, d2fdy2  = self.get_kernel_fun_grad_hess(y)
         if eval_points is not None:
-            eval_points = tf.constant(eval_points.astype("float32"))
-            eval_y = self.network.forward_tensor(eval_points)
-            fv = self.evaluate_kernel_fun(eval_y)
+            fv = self.evaluate_fun(eval_points)
         else:
             fv = None
 
@@ -183,45 +245,6 @@ class KernelNetModel:
         norm   =  self.get_kernel_fun_norm()
         score += lam * norm
         return score, data, s1, s2, norm, fv
-
-    def get_opt_alpha(self):
-        ''' 
-        This is used to get the optimal alpha, not tested
-        '''
-                                    
-        points = tf.placeholder('float32', shape=(self.npoint,) + self.ndim_in)
-        self.set_points(self._process_data(points))
-        d2ydx2, dydx, y, data = self.network.get_sec_data()
-        _ , gradK = self.kernel.get_grad(y)
-        _ , hessK = self.kernel.get_hess(y)
-
-        input_idx = self._construct_index()
-
-        dkdx = tf.einsum('ijk,kj'+input_idx+'->ij'+input_idx,
-                        gradK, dydx)
-
-        d2kdx2 = tf.einsum('ijkl,klj'+input_idx + '->ij'+input_idx, 
-                            hessK, dydx[None,...] * dydx[:,None,...]) + \
-                 tf.einsum('ijk,kj'+input_idx + '->ij'+input_idx, 
-                            gradK, d2ydx2)
-
-        H = tf.reduce_sum(tf.reduce_sum(d2kdx2,-1), -1)
-        G = tf.einsum('ik'+input_idx+',jk'+input_idx+'->ij',
-                      dkdx, dkdx)
-
-        alpha = tf.matrix_solve(G+tf.eye(G.shape[0].value)*0.1, -H[:,None])[:,0]
-        opt_score = tf.einsum('i,i->', alpha, H) + \
-                    0.5 * tf.einsum('i,ij,j', alpha, G, alpha)
-
-        return alpha, opt_score, points, data
-        
-    ''' The following are methdos that compute the score of a model
-        using an ordinary kernel only, and commpute
-        the optimal coefficient of the kernel points[
-            Gradient-free Hamiltonian Monte Carlo with Efficient Kernel Exponential Families
-            Heiko Strathmann, Dino Sejdinovic, Samuel Livingstone, Zoltan Szabo, Arthur Gretton
-            ]
-    '''
 
     def score_original(self, data):
 
@@ -270,7 +293,7 @@ class KernelNetModel:
         X = self.X
         sigma = self.kernel.sigma
         N = Y.shape[0]
-        D = self.ndim
+        D = self.ndim[0]
 
         K= self.kernel.get_gram_matrix(X, Y)
         K_exp = tf.expand_dims(K, -1)
@@ -304,20 +327,6 @@ class KernelNetModel:
             0.5 / ndata / sigma**2 * tf.einsum('i,ij,j', alpha, C, alpha)
 
         return J
-
-    def kernel_fit(self, data=None, lam = 0.01):
-
-        npoint = self.npoint
-        Y = self._process_data(data)
-        b, C = self._kernel_score_stats(Y)
-       
-        alpha_hat =  -self.kernel.sigma * \
-                        tf.matrix_solve( C, tf.expand_dims(b,-1) )
-        self.alpha = tf.assign(self.alpha, tf.squeeze(alpha_hat))
-      
-        return self.alpha
-
-
 
 class KernelNetMSD:
 
@@ -919,6 +928,20 @@ class LinearNetwork(Network):
         grad = tf.transpose(grad, [1,0,2])
         return grad, output, data
 
+    def get_sec_data(self):
+
+        param = self.param
+
+        # create input placeholder that has batch_size
+        data = tf.placeholder(tf.float32, shape = (self.batch_size,) + self.ndim_in)
+        data, single = self.reshape_data_tensor(data)
+        W = param['W']
+        out  = self.forward_tensor(data, param)
+        grad = tf.tile(W[None,:,:], [self.batch_size, 1, 1])
+        grad = tf.transpose(grad, [1,0,2])
+
+        sec = tf.zeros_like(grad)
+        return sec, grad, out, data
 
 class SquareNetwork(Network):
 
@@ -1059,8 +1082,8 @@ class LinearSoftNetwork(Network):
         self.ndim_out  = ndim_out
         self.ndim_in = ndim_in
         self.batch_size = batch_size
-        W   = tf.Variable(init_mean + np.random.randn(ndim_out[0], *ndim_in).astype('float32'))*init_std
-        b   = tf.Variable(np.random.randn(1, ndim_out[0]).astype('float32'))*init_std
+        W = tf.Variable(init_mean + np.random.randn(ndim_out[0], *ndim_in).astype('float32'))*init_std
+        b = tf.Variable(np.random.randn(1, ndim_out[0]).astype('float32'))*init_std
 
         self.nl = nl
         self.dnl = dnl

@@ -74,7 +74,7 @@ class test_PolynomialKernel(unittest.TestCase):
         assert np.allclose(grad, grad_real), np.linalg.norm(grad_real-grad)
         assert np.allclose(hess, hess_real), np.linalg.norm(hess_real-hess)
 
-#@unittest.skip('does not work yet')
+@unittest.skip('does not work yet')
 class test_GaussianKernel(unittest.TestCase):
 
 
@@ -490,7 +490,7 @@ class test_LinearReLUNetwork(unittest.TestCase):
         assert results.prod() == 0
         assert results.shape == (self.ndim_out[0], self.batch_size,) + self.ndim_in
     '''    
-# @unittest.skip('does not work yet')
+@unittest.skip('does not work yet')
 class test_LinearSoftNetwork(unittest.TestCase):
     
     ndim_in = (3,)
@@ -726,7 +726,7 @@ class test_ConvNetwork(unittest.TestCase):
         
         # build network
         self.network = ConvNetwork( self.ndim_in, self.nfil, self.filter_size, 
-                                    self.stride, self.batch_size, flatten=self.flatten,
+                                    self.stride, self.batch_size, 
                                     lin_grads = [0.2, 1.0])
         self.ndim_out = self.network.ndim_out
         self.sess = tf.InteractiveSession()
@@ -827,51 +827,42 @@ class test_ConvNetwork(unittest.TestCase):
 
 
 
-@unittest.skip('')
+# @unittest.skip('')
 class test_KernelNetModel(unittest.TestCase):
 
     ndata  = 10
-    ndim_in = (3,7,7)
+    ndim_in = (7,)
     filter_size = 3
     stride = 2
-    nfil = 5
-    ndim = 6
+    ndim = (6,)
     npoint = 5
 
     def setUp(self):
         
 
         # fake data and points
-        self.data =   np.random.randn(self.ndata, *self.ndim_in).astype('float32')
+        self.data =   np.random.randn(self.ndata , *self.ndim_in).astype('float32')
         self.data_tensor    =   tf.constant(self.data)
         self.points = np.random.randn(self.npoint, *self.ndim_in).astype('float32')
-        self.points_tensor  = tf.constant(self.points)
-        
-        ndim_1  = ( (self.ndim_in[-1] - self.filter_size)/self.stride + 1)**2 * self.nfil
-        layer_1 = ConvNetwork(self.ndim_in, self.nfil, self.filter_size, stride=self.stride,  batch_size = self.ndata, flatten=True, lin_grads = [0.3,1.0])
-        layer_2 = LinearReLUNetwork((ndim_1,), (self.ndim,), batch_size=self.ndata, lin_grads = [0.6,1.0])
-        network = DeepNetwork([layer_1])
+        self.points_tensor  =   tf.constant(self.points)
+
+        network = LinearSoftNetwork(self.ndim_in, self.ndim, batch_size=self.ndata)
 
         # setup lite model with fake alpha and points
-        kernel = GaussianKernel(network.ndim_out, 1000)
-        alpha = tf.Variable( np.random.randn(self.npoint).astype('float32') )
+        kernel  = GaussianKernel(network.ndim_out, 1000)
+        alpha   = tf.Variable( np.random.randn(self.npoint).astype('float32') )
 
         self.model = KernelNetModel(kernel, network, alpha)
         self.model.set_points( self.points_tensor )
         self.X = self.model.X
-        
+ 
         # compute and store the features 
         self.Y = self.model.network.forward_tensor(self.data_tensor)
         init = tf.global_variables_initializer()
 
         self.sess = tf.InteractiveSession()
         self.sess.run(init)
-    ''' 
-    def test_original_score(self):
-
-        score = self.model.kernel_score(self.data_tensor)
-        score_o = self.model.score_original(self.data_tensor)
-        assert np.allclose(score.eval(), score_o.eval())
+    
 
     def test_kernel_score(self):
 
@@ -883,12 +874,12 @@ class test_KernelNetModel(unittest.TestCase):
         Y = self.Y.eval()
         true_score = 0.0
         sigma = self.model.kernel.sigma
-        for l in range(self.ndim):
+        for l in range(self.ndim[0]):
             for i in range(self.npoint):
                 for j in range(self.ndata):
                     true_score += alpha[i]*np.exp(-np.linalg.norm(X[i]-Y[j])**2/sigma/2.0) * (-1 + 1/sigma * (X[i,l]-Y[j,l])**2)
         
-        for l in range(self.ndim):
+        for l in range(self.ndim[0]):
             for i in range(self.ndata):
                 sq = 0
                 for j in range(self.npoint):
@@ -897,25 +888,33 @@ class test_KernelNetModel(unittest.TestCase):
         true_score *=  1.0 / self.ndata/sigma
         assert np.allclose(score.eval(), true_score), (score.eval, true_score)
 
-    def test_kernel_fit(self):
+    def test_opt_score(self):
         
-        scores = []
+        # build assign operator
+        alpha_assign_opt, score, data = self.model.opt_score(self.points, 0.0)[:3]
+
+        initial_score_value = \
+                self.sess.run(score, feed_dict={data: self.data})
+        print initial_score_value
+
+        self.sess.run(alpha_assign_opt, feed_dict={data:self.data})
+
+        initial_score_value = \
+                self.sess.run(score, feed_dict={data: self.data})
+        print initial_score_value
+        
+        # assign random deviations to alpha
+        assign_op = tf.assign_add(self.model.alpha, tf.random_normal([self.npoint], stddev=0.1))
+        
+        # evaluate the optimal score after assigning optimal alpha
+        opt_score_value = self.sess.run(score, feed_dict={data : self.data})
+        print opt_score_value
+
         for i in range(10):
-            self.model.alpha = tf.assign(self.model.alpha, np.random.randn(self.npoint))
-            scores.append( self.model.kernel_score(self.data_tensor).eval() )
-
-        self.model.kernel_fit(self.data_tensor, lam=0.0)
-        score_opt = self.model.kernel_score(self.data_tensor).eval()
-
-        assert np.all(score_opt<=scores), (score_opt, min(scores))
-
-    def test_get_opt_alpha(self):
-        alpha, opt_score, points, data = self.model.get_opt_alpha()
-        alpha_value, opt_score_value = \
-                    self.sess.run([alpha, opt_score], feed_dict={points: self.points, data: self.data})
-        print 'alpha, opt_score: ', opt_score_value
-
-    ''' 
+            self.sess.run(assign_op)
+            score_value = self.sess.run(score, feed_dict={data : self.data})
+            assert opt_score_value<=score_value
+    '''
     def test_evaluate_kernel_fun(self):
         
         f = self.model.evaluate_kernel_fun(self.Y).eval()
@@ -950,7 +949,7 @@ class test_KernelNetModel(unittest.TestCase):
         
         hess, _ = self.model.get_kernel_fun_hess(self.Y)
         hess = hess.eval()
-        ndim = self.model.ndim
+        ndim = self.model.ndim[0]
         ninput = self.Y.shape[0]
 
         # hessian is of shape (ninput x ndim x ndim)
@@ -976,12 +975,10 @@ class test_KernelNetModel(unittest.TestCase):
         assert np.allclose(grad, grad_real)
         assert np.allclose(hess, hess_real)
         
-
     def test_score(self):
 
-        score, points, data = self.model.linear_score()
-        feed_dict = {points : self.points,
-                     data   : self.data}
+        score, data = self.model.score(self.points)[:2]
+        feed_dict = { data   : self.data}
         score = self.sess.run(score, feed_dict=feed_dict)
         
         score_real = 0.0
@@ -993,11 +990,11 @@ class test_KernelNetModel(unittest.TestCase):
         one_data_score = tf.reduce_sum(tf.diag_part(tf.hessians(f, this_data_flat)[0])) + \
                          0.5 * tf.reduce_sum(tf.gradients(f, this_data_flat)[0]**2)
         for yi in range(self.ndata):
-            score_real += one_data_score.eval({points:self.points,
+            score_real += one_data_score.eval({
                                   data:  self.data,
                                   this_data: self.data[yi:yi+1]})
-
+        score_real/=self.ndata
         assert np.allclose(score, score_real)
-        
 
+    '''
 unittest.main()
