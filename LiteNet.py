@@ -11,7 +11,86 @@ config.gpu_options.allow_growth=True
 # =====================            
 # Kernel related
 # =====================            
-class KernelNetModel:
+
+class LiteModel:
+
+
+    def score(self, alpha=None):
+
+        H, G, C, data = self._score_statistics()
+        if alpha is None:
+            alpha = self.alpha
+
+        s2 = tf.einsum('i,i->', alpha, H)
+        s1 = 0.5 * tf.einsum('i,ij,j', alpha, G, alpha)
+        score  =  s1+s2
+
+        return score, H, G, C, data
+
+    def grad(self, alpha=None):
+        raise(NotImplementedError)
+
+    def opt_score(self, lam=0.0, lam2=0.0, lam3=0.0):
+        '''
+        compute regularised score and returns a handle for assign optimal alpha
+        '''
+
+        score, H, G, C, data = self.score()
+
+        r_norm =  self.get_fun_rkhs_norm()
+        l_norm =  self.get_fun_l2_norm()
+
+        alpha_sg = self.alpha
+
+        curve  =  tf.einsum('i,ij,j', alpha_sg, C, alpha_sg)
+
+        loss   =  score + 0.5 * ( lam * r_norm + lam2 * l_norm + curve * lam3)
+
+        npoint = self.npoint
+
+        alpha = tf.matrix_solve(G + self.K*lam + tf.eye(npoint)*lam2 + C * lam3, -H[:,None])[:,0]
+        alpha_assign_opt = tf.assign(self.alpha, alpha)
+
+        return alpha_assign_opt, loss, score, data, r_norm, l_norm
+        
+    def val_score(self, lam=0.0, lam2=0.0, lam3=0.0):
+
+        H, G, C, train_data = self._score_statistics()
+
+        npoint = self.npoint
+
+        #self.alpha = tf.ones(npoint)
+        self.alpha = tf.matrix_solve(G + self.K*lam + tf.eye(npoint)*lam2 + C * lam3, -H[:,None])[:,0]
+        alpha_sg = tf.identity(self.alpha)
+        alpha_assign_opt = None
+        
+        score, H, G, C, val_data = self.score(alpha=alpha_sg)
+        curve = tf.einsum('i,ij,j', alpha_sg, C, alpha_sg)
+
+        r_norm =  self.get_fun_rkhs_norm()
+        l_norm =  self.get_fun_l2_norm()
+        loss   =  score
+
+        return loss, score, train_data, val_data, r_norm, l_norm, curve, alpha_assign_opt
+
+    def step_score(self, lam=0.0, lam2=0.0, lam3=0.0):
+        
+        assert self.alpha is not None
+        alpha_sg = tf.stop_gradient(self.alpha)
+
+        score, H, G, C, train_data = self.score()
+        score_sg, H, G, C, val_data = self.score(alpha=alpha_sg)
+
+        r_norm =  self.get_fun_rkhs_norm()
+        l_norm =  self.get_fun_l2_norm()
+        curve  =  tf.einsum('i,ij,j', self.alpha, C, self.alpha)
+
+        loss =  score + 0.5 * ( lam * r_norm + lam2 * l_norm + curve * lam3)
+        loss_sg =  score_sg
+
+        return loss, loss_sg, score, train_data, val_data, r_norm, l_norm, curve
+
+class KernelNetModel(LiteModel):
     ''' A class that combines an ordinary kernel on the features
         extracted by a net
 
@@ -27,16 +106,15 @@ class KernelNetModel:
 
     ''' 
     
-    def __init__(self, kernel, network, alpha, points = None):
+    def __init__(self, kernel, network, alpha = None, points = None):
 
-        ''' npoint: number of data that define the RKHS function
+        ''' 
             ndim  : dimentionality of input kernel, an integer
             ndim_in: shape of input data to the network, a tuple
             X     : points that define the RKHS function
         '''
         
         self.alpha   = alpha
-        self.npoint = alpha.shape[0].value
         self.ndim   = network.ndim_out
         self.ndim_in= network.ndim_in
         self.network = network
@@ -57,7 +135,9 @@ class KernelNetModel:
         '''
         
         assert points.shape[1:] == self.ndim_in, 'input shape of points not the same as predefiend'
-        self.X = self.network.forward_tensor(points)
+        self.X = self._process_data(points)
+        self.K = self.kernel.get_gram_matrix(self.X, self.X)
+        self.npoint = points.shape[0].value
 
     def evaluate_kernel_fun(self, Y):
         '''
@@ -67,28 +147,27 @@ class KernelNetModel:
         
         sum_m alpha_m * k(x_m, y_i)
 
-        this is used mainly for testing the gradients using autodiff
-        
         '''
         if Y.shape.ndims == 1:
             Y = tf.expand_dims(Y,0)
         
-        gram = self.kernel.get_gram_matrix(self.X, Y)
+        K = self.kernel.get_gram_matrix(self.X, Y)
 
-        return tf.einsum('i,ij', self.alpha, gram)
+        return tf.einsum('i,ij', self.alpha, K)
 
-    def evaluate_fun(self,X):
+    def evaluate_fun(self, data):
 
-        eval_y = self.network.forward_tensor(X)
+        eval_y = self._process_data(data)
         fv = self.evaluate_kernel_fun(eval_y)
         return fv
-        
 
-    def get_kernel_fun_norm(self):
+    def get_fun_l2_norm(self):
         
-        gram = self.kernel.get_gram_matrix(self.X, self.X)
-        return tf.einsum('i,ij,j', self.alpha, gram, self.alpha)
+        return tf.reduce_sum(self.alpha**2)
 
+    def get_fun_rkhs_norm(self, K=None):
+        
+        return tf.einsum('i,ij,j', self.alpha, self.K, self.alpha)
         
     def get_kernel_fun_grad(self, Y):
 
@@ -129,205 +208,110 @@ class KernelNetModel:
         ''' construct string for use in tf.einsum as it does not support...'''
         return ''.join([str(unichr(i+115)) for i in range(len(self.ndim_in))])
 
-    def score(self, points, lam=0.0, eval_points=None):
+    def _score_statistics(self):
 
-        
-        points = tf.constant(points.astype("float32"))
-        self.X = self._process_data(points)
-        d2ydx2, dydx, y, data = self.network.get_sec_data()
-        dfdy, d2fdy2   = self.get_kernel_fun_grad_hess(y)
-
-        if eval_points is not None:
-            fv = self.evaluate_fun(eval_points)
-        else:
-            fv = None
-
-        input_idx = self._construct_index()
-
-        dfdx = tf.einsum('jk,kj'+input_idx+'->j'+input_idx,
-                        dfdy, dydx)
-
-        d2fdx2 = tf.einsum('jkl,kj'+input_idx + ',lj' + input_idx + '->j'+input_idx, 
-                            d2fdy2, dydx, dydx)+\
-                 tf.einsum('jk,kj'+input_idx + '->j'+input_idx, 
-                            dfdy, d2ydx2)
-
-        s2 = tf.reduce_sum(d2fdx2)
-        s1 = tf.reduce_sum(0.5*dfdx**2)
-        # score = s1+s2+lam2*tf.reduce_sum(d2fdx2**2)
-        score  = (s1+s2) / self.network.batch_size
-        norm   =  self.get_kernel_fun_norm()
-        score += lam * norm
-        return score, data, s1, s2, norm, fv
-
-
-    def opt_score(self, points, lam=0.0, eval_points=None):
-
-        ''' 
-        This is used to get the optimal alpha
-        '''
-                                    
-        points = tf.constant(points.astype("float32"))
-        self.set_points(points)
 
         d2ydx2, dydx, y, data = self.network.get_sec_data()
         gradK, hessK = self.kernel.get_grad_hess(self.X, y)
-
-        if eval_points is not None:
-            fv = self.evaluate_fun(eval_points)
-        else:
-            fv = None
 
         input_idx = self._construct_index()
 
         dkdx = tf.einsum('ijk,kj'+input_idx+'->ij'+input_idx,
                         gradK, dydx)
-
+        '''
         d2kdx2 = tf.einsum('ijkl,klj'+input_idx + '->ij'+input_idx, 
                             hessK, dydx[None,...] * dydx[:,None,...]) + \
                  tf.einsum('ijk,kj'+input_idx + '->ij'+input_idx, 
                             gradK, d2ydx2)
 
-        H = tf.reduce_sum(tf.reduce_sum(d2kdx2,-1), -1)
-        G = tf.einsum('ik'+input_idx+',jk'+input_idx+'->ij',
+        '''
+        s2 = tf.einsum('ijkl,kj'+input_idx + '->ijl'+input_idx, 
+                            hessK, dydx) 
+        s2 = tf.einsum('ijl'+input_idx+',lj'+input_idx + '->ij'+input_idx, 
+                            s2, dydx) 
+        s1 = tf.einsum('ijk,kj'+input_idx + '->ij'+input_idx, 
+                            gradK, d2ydx2)
+        d2kdx2 = s1 + s2
+
+        H = tf.einsum('ij'+input_idx+"->ij", 
+                      d2kdx2)
+        H = tf.reduce_mean(H,1)
+        
+        G = tf.einsum('ik'+input_idx+',jk'+input_idx+'->ijk',
                       dkdx, dkdx)
-
-        s2 = tf.einsum('i,i->', self.alpha, H) / self.network.batch_size
-        s1 = 0.5 * tf.einsum('i,ij,j', self.alpha, G, self.alpha) / self.network.batch_size
-        score  =  s1+s2
-        norm   =  self.get_kernel_fun_norm()
-        score += lam * norm
-
-        gram = self.kernel.get_gram_matrix(self.X, self.X)
-        #alpha = tf.matrix_solve(G, -H[:,None])[:,0]
-        #alpha = tf.matrix_solve(G + gram*lam, -H[:,None])[:,0]
-        alpha = tf.matrix_solve(G + tf.eye(G.shape[0].value)*lam, -H[:,None])[:,0]
-        alpha_assign_opt = tf.assign(self.alpha, alpha)
-
-        return alpha_assign_opt, score, data, s1, s2, norm, fv
+        G = tf.reduce_mean(G,2)
         
-    ''' The following are methdos that compute the score of a model
-        using an ordinary kernel only, and commpute
-        the optimal coefficient of the kernel points[
-            Gradient-free Hamiltonian Monte Carlo with Efficient Kernel Exponential Families
-            Heiko Strathmann, Dino Sejdinovic, Samuel Livingstone, Zoltan Szabo, Arthur Gretton
-            ]
-    '''
+        C = tf.einsum('ik'+input_idx+',jk'+input_idx+'->ijk',
+                      d2kdx2, d2kdx2)
+        C = tf.reduce_mean(C,2)
 
-    def linear_score(self, points, lam=0.0, lam2=0.0, eval_points = None):
+        return H, G, C, data
 
-        '''
-        The score that is applied to linear-ReLU networks such that
-        the second derivatives w.r.t input are zeros
-        '''
 
-        points = tf.constant(points.astype("float32"))
-        self.set_points(points)
-        dydx, y, data = self.network.get_grad_data()
-        dfdy, d2fdy2  = self.get_kernel_fun_grad_hess(y)
-        if eval_points is not None:
-            fv = self.evaluate_fun(eval_points)
-        else:
-            fv = None
+class KernelModel(LiteModel):
 
-        input_idx = self._construct_index()
-
-        dfdx = tf.einsum('jk,kj'+input_idx+'->j'+input_idx,
-                        dfdy, dydx)
-
-        d2fdx2 = tf.einsum('jkl,kj'+input_idx + ',lj' + input_idx + '->j'+input_idx, 
-                            d2fdy2, dydx, dydx)
-
-        s2 = tf.reduce_sum(d2fdx2)
-        s1 = tf.reduce_sum(0.5*dfdx**2)
-        # score = s1+s2+lam2*tf.reduce_sum(d2fdx2**2)
-        score  = (s1+s2) / self.network.batch_size
-        norm   =  self.get_kernel_fun_norm()
-        score += lam * norm
-        return score, data, s1, s2, norm, fv
-
-    def score_original(self, data):
-
-        ''' This computs the score objective without the network-dependent 
-            base measure q_0
-        '''
-
-        sigma = self.kernel.sigma*1
-        N = data.shape[0].value
-        alpha = self.alpha
-        ndim  = self.ndim
-
-        # output of the network, same as x's
-        Y = self.network.forward_tensor(data)
-
-        # compute gram matrix of network output with points
-        K = self.kernel.get_gram_matrix(self.X, Y)
-        D = 1.0/sigma*self.kernel.pdist2 - ndim
-        J = tf.reduce_sum(tf.expand_dims(alpha,1) * K * D) * 1.0 / N / sigma
+    def __init__(self, kernel, alpha = None, points = None):
         
-        # X_il
-        # Y_jl
-        X = self.X
-        # C = (X[:,None,:] - x[None,:,:]), C_ijl
-        S = tf.expand_dims(X,1) - tf.expand_dims(Y,0)
+        self.kernel = kernel
+        self.alpha   = alpha
+        if points is not None:
+            self.set_points(points)
 
-        # alpha_exp = alpha[:,None, NOne], alpha_exp_i..
-        alpha_exp = tf.expand_dims(tf.expand_dims(alpha, -1),-1)
+    def set_points(self, points):
+        
+        self.X = points
+        self.npoint = points.shape[0].value
+        self.ndim_in = (points.shape[1].value, )
+        self.K = self.kernel.get_gram_matrix(self.X, self.X)
 
-        # K_exp = K[:,:,None], K_ij.
-        K_exp     = tf.expand_dims(K, -1)
+    def evaluate_fun(self, data):
 
-        J += 0.5/N/(sigma**2)*tf.reduce_sum(
-                            tf.reduce_sum(alpha_exp * (S) * K_exp, 0
-                        )**2)
+        if data.shape.ndims == 1:
+            data = tf.expand_dims(data,0)
 
-        return J
+        gram = self.kernel.get_gram_matrix(self.X, data)
 
+        return tf.einsum('i,ij', self.alpha, gram)
 
-    def _kernel_score_stats(self, Y):
+    def evaluate_grad(self, data):
+
+        gram = self.kernel.get_grad(self.X, data)
+
+        return tf.einsum('i,ijk', self.alpha, gram)
+        
+
+    def get_fun_l2_norm(self):
+        
+        return tf.reduce_sum(self.alpha**2)
+
+    def get_fun_rkhs_norm(self, K=None):
+        
+        return tf.einsum('i,ij,j', self.alpha, self.K, self.alpha)
+
+    def _score_statistics(self):
         
         ''' compute the vector b and matrix C
             Y: the input data to the lite model to fit
         '''
-
-        X = self.X
-        sigma = self.kernel.sigma
-        N = Y.shape[0]
-        D = self.ndim[0]
-
-        K= self.kernel.get_gram_matrix(X, Y)
-        K_exp = tf.expand_dims(K, -1)
-
-        S = tf.expand_dims(X,1) - tf.expand_dims(Y,0)
-
-        b =  -D * tf.reduce_sum(K,1)
-        b += 1/sigma * tf.reduce_sum( K * tf.reduce_sum(S**2, 2), 1)
-
-        # term inside the square that multiplies alpha_i
-        A   = S * K_exp
-        SA  = tf.einsum('ikl,jkl->ij', A, A)
-        C   = (SA)
-
-        return b, C
-
-    def kernel_score(self, data=None):
         
-        Y = self._process_data(data)
-        ndata = data.shape.dims[0].value
+        data = tf.placeholder(tf.float32, shape = (None,) + self.ndim_in)
 
-        alpha = self.alpha
-        alpha_V = tf.expand_dims(alpha,1)
-        alpha_T = tf.expand_dims(alpha,0)
+        dkdx, d2kdx2 = self.kernel.get_grad_sec(self.X, data)
 
-        sigma = self.kernel.sigma
+        H = tf.einsum("ijk->ij", 
+                      d2kdx2)
+        H = tf.reduce_mean(H,1)
+        
+        G = tf.einsum('ikl,jkl->ijk',
+                      dkdx, dkdx)
+        G = tf.reduce_mean(G,2)
+        
+        C = tf.einsum('ikl,jkl->ijk',
+                      d2kdx2, d2kdx2)
+        C = tf.reduce_mean(C,2)
 
-        b, C = self._kernel_score_stats(Y)
-
-        J = 1.0 / ndata / sigma    * tf.einsum('i,i'   , alpha, b) + \
-            0.5 / ndata / sigma**2 * tf.einsum('i,ij,j', alpha, C, alpha)
-
-        return J
-
+        return H, G, C, data
+    
 class KernelNetMSD:
 
     ''' 
@@ -391,18 +375,12 @@ class GaussianKernel:
     Y: input data, rank 2
     '''
 
-    def __init__(self, ndim, sigma = 1.0, X = None, npoint = None):
+    def __init__(self, sigma = 1.0):
 
-        '''
-        X: points that define the kernel, X.shape = (npoint, ndim)
-        '''
-            
         self.sigma = sigma
         self.pdist2 = None
 
-
     def get_pdist2(self, X, Y):
-
         
         if X.shape.ndims==1:
             X = X[None,:]
@@ -421,7 +399,6 @@ class GaussianKernel:
         sigma = self.sigma
         gram = tf.exp(-0.5/sigma*pdist2)
         return gram
-
 
     def get_grad(self, X, Y):
         ''' first derivative of the kernel on the second input, dk(x, y)/dy'''
@@ -453,10 +430,48 @@ class GaussianKernel:
 
         return K
 
+    def get_grad_sec(self, X, Y):
+
+        gram = self.get_gram_matrix(X, Y)
+
+        # D contrains the vector difference between pairs of x_m and y_i
+        # divided by sigma
+        D = (tf.expand_dims(X, 1) - tf.expand_dims(Y, 0))/self.sigma
+
+        # K is a vector that has derivatives on all points
+        K1 = (gram[:,:,None]* D)
+        
+        D2 = D**2
+        I  = tf.ones( D.shape[-1].value )/self.sigma
+
+        # K is a vector that has the hessian on all points
+        K2 = gram[:,:,None] * (D2 - I)
+
+        return K1, K2
+
+    def get_gram_grad_sec(self, X, Y):
+
+        gram = self.get_gram_matrix(X, Y)
+
+        # D contrains the vector difference between pairs of x_m and y_i
+        # divided by sigma
+        D = (tf.expand_dims(X, 1) - tf.expand_dims(Y, 0))/self.sigma
+
+        # K is a vector that has derivatives on all points
+        K1 = (gram[:,:,None]* D)
+        
+        D2 = D**2
+        I  = tf.ones( D.shape[-1].value )/self.sigma
+
+        # K is a vector that has the hessian on all points
+        K2 = gram[:,:,None] * (D2 - I)
+
+        return gram, K1, K2
+
     def get_grad_hess(self, X, Y):
 
         '''
-        compute the first and second derivatives using one computation of gram matrix 
+        compute the first derivatives and hessian using one computation of gram matrix 
         '''
 
         gram = self.get_gram_matrix(X, Y)
@@ -476,6 +491,29 @@ class GaussianKernel:
 
         return K1, K2
 
+    def get_gram_grad_hess(self, X, Y):
+
+        '''
+        compute the first derivatives and hessian using one computation of gram matrix 
+        '''
+
+        gram = self.get_gram_matrix(X, Y)
+
+        # D contrains the vector difference between pairs of x_m and y_i
+        # divided by sigma
+        D = (tf.expand_dims(X, 1) - tf.expand_dims(Y, 0))/self.sigma
+
+        # K is a vector that has derivatives on all points
+        K1 = (gram[:,:,None]* D)
+        
+        D2 = tf.einsum('ijk,ijl->ijkl', D, D)
+        I  = tf.eye( D.shape[-1].value )/self.sigma
+
+        # K is a vector that has the hessian on all points
+        K2 = gram[:,:,None,None] * (D2 - I)
+
+        return gram, K1, K2
+
     def get_two_grad_cross_hess(self, X, Y):
         '''
         compute the derivatives of d2k/dx_idy_j, used for MSD
@@ -494,6 +532,7 @@ class GaussianKernel:
         I  = tf.eye( D.shape[-1].value )/self.sigma
 
         K3 = gram[:,:,None,None] * (I - D2)
+
         return K1, K2, K3, gram
         
 
@@ -933,7 +972,8 @@ class LinearNetwork(Network):
         param = self.param
 
         # create input placeholder that has batch_size
-        data = tf.placeholder(tf.float32, shape = (self.batch_size,) + self.ndim_in)
+        #data = tf.placeholder(tf.float32, shape = (self.batch_size,) + self.ndim_in)
+        data = tf.placeholder(tf.float32, shape = (None,) + self.ndim_in)
         data, single = self.reshape_data_tensor(data)
         W = param['W']
         out  = self.forward_tensor(data, param)
@@ -1070,7 +1110,7 @@ class LinearSoftNetwork(Network):
 
     ''' y =  ReLU( W \cdot x + b ) '''
 
-    def __init__(self, ndim_in, ndim_out, batch_size = 2, 
+    def __init__(self, ndim_in, ndim_out, 
                 init_std = 1.0, init_mean = 0.0, 
                 #nl   = lambda x: tf.where(x<30, tf.nn.softplus(x), x),
                 #dnl  = lambda x: 1/(1+tf.exp(-x)),
@@ -1081,7 +1121,6 @@ class LinearSoftNetwork(Network):
         
         self.ndim_out  = ndim_out
         self.ndim_in = ndim_in
-        self.batch_size = batch_size
         W = tf.Variable(init_mean + np.random.randn(ndim_out[0], *ndim_in).astype('float32'))*init_std
         b = tf.Variable(np.random.randn(1, ndim_out[0]).astype('float32'))*init_std
 
@@ -1133,8 +1172,7 @@ class LinearSoftNetwork(Network):
 
         param = self.param
 
-        # create input placeholder that has batch_size
-        data = tf.placeholder(tf.float32, shape = (self.batch_size,) + self.ndim_in)
+        data = tf.placeholder(tf.float32, shape = (None,) + self.ndim_in)
         data, single = self.reshape_data_tensor(data)
         W = param['W']
         b = param['b']
@@ -1150,7 +1188,7 @@ class LinearSoftNetwork(Network):
         param = self.param
 
         # create input placeholder that has batch_size
-        data = tf.placeholder(tf.float32, shape = (self.batch_size,) + self.ndim_in)
+        data = tf.placeholder(tf.float32, shape = (None,) + self.ndim_in)
         data, single = self.reshape_data_tensor(data)
         W = param['W']
         b = param['b']
