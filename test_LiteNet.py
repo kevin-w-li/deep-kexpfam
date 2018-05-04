@@ -873,67 +873,6 @@ class test_KernelNetModel(unittest.TestCase):
             score_value = self.sess.run(score, feed_dict={data : self.data})
             assert opt_score_value<=score_value
 
-    '''
-    def test_evaluate_kernel_fun(self):
-        
-        f = self.model.evaluate_kernel_fun(self.Y).eval()
-
-        Y_real = self.model.network.forward_array(self.data)
-        K_real = np.empty((self.npoint, self.ndata))
-        X_real = self.model.X.eval()
-        sigma  = self.model.kernel.sigma
-
-        for xi in range(self.npoint):
-            for yi in range(self.ndata):
-                K_real[xi, yi] = np.exp(-np.sum((X_real[xi]-Y_real[yi])**2)/2.0/sigma) 
-
-        f_real = self.model.alpha.eval().dot(K_real)
-
-        assert np.allclose(f_real, f), np.linalg.norm(f_real - f)
-
-    def test_get_kernel_fun_grad(self):
-    
-        grad, _ = self.model.get_kernel_fun_grad(self.Y)
-        grad = grad.eval()
-        values = self.model.evaluate_kernel_fun(self.Y)
-        grad_real = np.empty(self.Y.shape)
-        
-        for vi in range(values.shape[0]):
-           grad_real[vi] = tf.stack(tf.gradients(values[vi], self.Y)[0][vi]).eval()
-           
-        assert np.allclose(grad, grad_real)
-
-
-    def test_get_kernel_fun_hess(self):
-        
-        hess, _ = self.model.get_kernel_fun_hess(self.Y)
-        hess = hess.eval()
-        ndim = self.model.ndim[0]
-        ninput = self.Y.shape[0]
-
-        # hessian is of shape (ninput x ndim x ndim)
-        hess_real = np.empty( (ninput, ndim, ndim) )
-        for vi in range(ninput):
-            this_y = self.Y[vi]
-            values = self.model.evaluate_kernel_fun(this_y)
-            hess_real[vi] = tf.hessians(values[0], this_y)[0].eval()
-        assert np.allclose(hess, hess_real)
-    
-    def test_get_kernel_fun_grad_hess(self):
-
-        grad, hess = self.model.get_kernel_fun_grad_hess(self.Y)
-        grad = grad.eval()
-        hess = hess.eval()
-
-        grad_real,_ = self.model.get_kernel_fun_grad(self.Y)
-        hess_real,_ = self.model.get_kernel_fun_hess(self.Y)
-
-        grad_real = grad_real.eval()
-        hess_real = hess_real.eval()
-
-        assert np.allclose(grad, grad_real)
-        assert np.allclose(hess, hess_real)
-    '''
         
     def test_score(self):
 
@@ -958,6 +897,7 @@ class test_KernelNetModel(unittest.TestCase):
         score_real/=self.ndata
         print score, score_real
         assert np.allclose(score, score_real)
+
 
 class test_KernelModel(unittest.TestCase):
 
