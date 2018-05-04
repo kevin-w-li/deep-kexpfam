@@ -157,9 +157,30 @@ class KernelNetModel(LiteModel):
 
     def evaluate_fun(self, data):
 
-        eval_y = self._process_data(data)
-        fv = self.evaluate_kernel_fun(eval_y)
+        y = self._process_data(data)
+        fv = self.evaluate_kernel_fun(y)
         return fv
+
+    def evaluate_gram(self, points, data):
+        
+        x = self._process_data(points)
+        y = self._process_data(data)
+        return self.kernel.get_gram_matrix(x, y)
+
+
+    def evaluate_grad(self, data):
+
+        dydx, y, _ = self.network.get_grad_data(data)
+        gradK = self.kernel.get_grad(self.X, y)
+
+        input_idx = self._construct_index()
+
+        gv = tf.einsum('i,ijk', self.alpha, gradK)
+
+        gv = tf.einsum('jk,kj'+input_idx+'->j'+input_idx,
+                        gv, dydx)
+
+        return gv
 
     def get_fun_l2_norm(self):
         
@@ -169,7 +190,7 @@ class KernelNetModel(LiteModel):
         
         return tf.einsum('i,ij,j', self.alpha, self.K, self.alpha)
         
-    def get_kernel_fun_grad(self, Y):
+    def get_kernel_grad(self, Y):
 
         ''' first derivative of the function of lite model '''
 
@@ -178,7 +199,7 @@ class KernelNetModel(LiteModel):
 
         return grad, K
     
-    def get_kernel_fun_hess(self, Y):
+    def get_kernel_hess(self, Y):
 
         '''
         gram matrix, multiplied by ( outer products of x_m - y_i, minus
@@ -191,7 +212,7 @@ class KernelNetModel(LiteModel):
 
         return hess, K
 
-    def get_kernel_fun_grad_hess(self, Y):
+    def get_kernel_grad_hess(self, Y):
 
         '''
         compute the gradient and hessian using one computation of gram matrix
@@ -367,7 +388,13 @@ class KernelNetMSD:
         print h
         return h
 
-class GaussianKernel:
+class Kernel:
+
+    def __init__(self,):
+        
+        raise(NotImplementedError)
+
+class GaussianKernel(Kernel):
 
     '''
     Output and derivatives of Gaussain kernels
@@ -1168,12 +1195,13 @@ class LinearSoftNetwork(Network):
             out = out[0]
         return out
 
-    def get_grad_data(self):
+    def get_grad_data(self, data=None):
 
         param = self.param
-
-        data = tf.placeholder(tf.float32, shape = (None,) + self.ndim_in)
-        data, single = self.reshape_data_tensor(data)
+        
+        if data is None:
+            data = tf.placeholder(tf.float32, shape = (None,) + self.ndim_in)
+            data, single = self.reshape_data_tensor(data)
         W = param['W']
         b = param['b']
         lin_out = tf.matmul(data, W,  transpose_b = True) + b
