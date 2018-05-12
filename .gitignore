@@ -7,3 +7,4 @@ Utils.pyc
 figs/
 results/*
 .ipynb_checkpoints/*
+tb_logs/*
