@@ -20,13 +20,24 @@ FDTYPE="float32"
 # Kernel related
 # =====================            
 
+
+
 class LiteModel:
 
 
-    def __init__(self, kernel, alpha = None, points = None):
+    def __init__(self, kernel, alpha = None, points = None, 
+                init_log_lam = 0.0, log_lam_weights=-3):
         
         self.kernel = kernel
         self.alpha   = alpha
+
+        with tf.name_scope("regularizers"):
+
+            self.lam_norm    = 10**tf.Variable(init_log_lam, dtype=FDTYPE,   name="log_lam_norm")
+            self.lam_alpha   = 10**tf.Variable(init_log_lam, dtype=FDTYPE,   name="log_lam_alpha")
+            self.lam_curve   = 10**tf.Variable(init_log_lam, dtype=FDTYPE,   name="log_lam_curve")
+            self.lam_weights = 10**tf.constant(log_lam_weights, dtype=FDTYPE,name="log_lam_weights")
+
         if points is not None:
             self.set_points(points)
 
@@ -97,23 +108,22 @@ class LiteModel:
 
         return alpha_assign_opt, loss, score, data, r_norm, l_norm
         
-    def val_score(self, train_data=None, val_data=None, 
-                    lam_norm=0.0, lam_alpha=0.0, lam_curve=0.0, lam_weights=0.0):
+    def val_score(self, train_data=None, val_data=None):
 
         H, G, C, train_data = self._score_statistics(data=train_data)
-
-        #self.alpha = tf.ones(npoint)
-        self.alpha = tf.matrix_solve(G + self.K*lam_norm + 
-                                    tf.eye(self.npoint, dtype=FDTYPE)*lam_alpha + 
-                                    C * lam_curve, -H[:,None])[:,0]
         
+        #self.alpha = tf.ones(npoint)
+        self.alpha = tf.matrix_solve(G + self.K*self.lam_norm + 
+                                    tf.eye(self.npoint, dtype=FDTYPE)*self.lam_alpha + 
+                                    C * self.lam_curve, -H[:,None])[:,0]
+
         score, H, G, C, val_data = self.score(data=val_data,  alpha=self.alpha)
 
         r_norm =  self.get_fun_rkhs_norm()
         l_norm =  self.get_fun_l2_norm()
         curve = tf.einsum('i,ij,j', self.alpha, C, self.alpha)
         w_norm =  self.get_weights_norm()
-        loss   =  score + 0.5 * w_norm * lam_weights
+        loss   =  score + 0.5 * w_norm * self.lam_weights
 
         return loss, score, train_data, val_data, r_norm, l_norm, curve, w_norm
 
@@ -187,12 +197,12 @@ class LiteModel:
 
 class Kernel:
 
-    def __init__(self,):
+    def __init__(self):
         raise(NotImplementedError)
 
     def get_weights_norm(self):
         # no weights by default
-        return 0.0
+        return tf.constant(0.0, dtype=FDTYPE)
 
     def _net_forward(self, X):
         # no network by default
@@ -480,9 +490,10 @@ class GaussianKernel(Kernel):
     Y: input data, rank 2
     '''
 
-    def __init__(self, sigma = 1.0):
-
-        self.sigma = sigma
+    def __init__(self, sigma = 1):
+        
+        with tf.name_scope("GaussianKernel"):
+            self.sigma  = 10**tf.Variable(sigma, dtype=FDTYPE, name="log_sigma")
         self.pdist2 = None
 
     def get_pdist2(self, X, Y):
@@ -798,7 +809,7 @@ class SumOutputNet:
         # sum the output over batch sum_output[i] = sum_j y_i(x_j)
         self.sum_output = tf.reduce_sum(self.output, axis=0)
 
-class Network:
+class Network(object):
     '''
     Network should be implemented as subclass of Network
 
@@ -812,21 +823,20 @@ class Network:
     
     '''
    
+    def __init__(self, ndim_in, ndim_out, init_mean, init_std, scope):
 
-    # input shape should be a tuple
-    ndim_in = None
-    # output shape is a scalar. Output assumed to be 1-D
-    ndim_out= None
-    # how much data to process for gradients, only for gradients and second gradients now.
-    batch_size   = None
-    # network parameter as a dictionary
-    param   = None
-    # empty now...
-    out     = None
+        self.ndim_out  = ndim_out
+        self.ndim_in = ndim_in
 
-    def __init__(self, ndim_in, ndim):
+        with tf.name_scope(scope):
+            W = tf.Variable(init_mean + np.random.randn(*(ndim_out + ndim_in)).astype(FDTYPE)*init_std,
+                            name="W")
+            b = tf.Variable(np.random.randn(1, *ndim_out).astype(FDTYPE)*init_std,
+                            name="b")
 
-        raise NotImplementedError('should implement individual networks')
+        self.param = OrderedDict([('W', W), ('b', b)])
+        self.scope=scope
+
 
     def reshape_data_array(self, x):
         ''' check if input is 1-D and augment if so'''
@@ -1028,18 +1038,13 @@ class LinearSoftNetwork(Network):
                 #d2nl = lambda x: tf.where(tf.logical_and(-30<x, x<30), tf.exp(x-2*tf.log(1+tf.exp(x))), tf.zeros_like(x))):
                 nl   = tf.nn.softplus,
                 dnl  = lambda x: 1/(1+tf.exp(-x)),
-                d2nl = lambda x: tf.exp(x-2*tf.log(1+tf.exp(x)))):
+                d2nl = lambda x: tf.exp(x-2*tf.log(1+tf.exp(x))), scope="fc1"):
         
-        self.ndim_out  = ndim_out
-        self.ndim_in = ndim_in
-        W = tf.Variable(init_mean + np.random.randn(*(ndim_out + ndim_in)).astype(FDTYPE))*init_std
-        b = tf.Variable(np.random.randn(1, *ndim_out).astype(FDTYPE))*init_std
-
+        super(LinearSoftNetwork, self).__init__(ndim_in, ndim_out, init_mean, init_std, scope)
         self.nl = nl
         self.dnl = dnl
         self.d2nl = d2nl
 
-        self.param = OrderedDict([('W', W), ('b', b)])
 
     def forward_array(self, data, param = None):
         
@@ -1280,19 +1285,11 @@ class LinearNetwork(Network):
 
     ''' y =  W \cdot x + b '''
 
-    def __init__(self, ndim_in, ndim_out, batch_size = 2, init_std = 1.0, init_mean = 0.0, identity=False):
-        
-        self.ndim_out  = ndim_out
-        self.ndim_in = ndim_in
+    def __init__(self, ndim_in, ndim_out, batch_size = 2, init_std = 1.0, init_mean = 0.0, identity=False,
+                scope="fc1"):
+        super(LinearNetwork, self).__init__(ndim_in, ndim_out, init_mean, init_std, scope) 
         self.batch_size = batch_size
-        if identity:
-            W   = tf.constant(np.eye(ndim_in[0]).astype(FDTYPE))
-            b   = tf.constant(np.zeros((1,ndim_in[0])).astype(FDTYPE))
-        else:
-            W   = tf.Variable(init_mean + np.random.randn(ndim_out, *ndim_in).astype(FDTYPE))*init_std
-            b   = tf.Variable(np.random.randn(1, ndim_out).astype(FDTYPE))*init_std
-        self.param = OrderedDict([('W', W), ('b', b)])
-        self.out   = None
+
 
     def forward_array(self, data, param = None):
         

@@ -755,7 +755,7 @@ class test_LiteModel(unittest.TestCase):
 
         alpha   = tf.Variable( np.random.randn(self.npoint).astype(FDTYPE))
 
-        self.model = LiteModel(kernel, alpha=alpha)
+        self.model = LiteModel(kernel, alpha=alpha, init_log_lam=-np.inf)
         self.model.set_points( self.points_tensor )
  
         # compute and store the features 
