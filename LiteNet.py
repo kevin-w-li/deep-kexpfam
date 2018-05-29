@@ -16,27 +16,49 @@ def construct_index(dim,s="o", n=1):
 
 FDTYPE="float32"
 
+c = 15
+nl   = lambda x: tf.where(x<c, tf.log(1+tf.exp(x)), x) - tf.ones([], dtype=FDTYPE)
+dnl  = lambda x: tf.where(x<-c, tf.zeros_like(x), 1/(1+tf.exp(-x)))
+d2nl = lambda x: tf.where(tf.logical_and(-c<x, x<c), tf.exp(-x)/tf.square(1+tf.exp(-x)), tf.zeros_like(x))
+'''
+
+nl   = lambda x: tf.where(x<0, tf.exp(x)-1, x)
+dnl  = lambda x: tf.where(x<0, tf.exp(x), tf.ones_like(x))
+d2nl = lambda x: tf.where(x<0, tf.exp(x), tf.zeros_like(x))
+
+nl   = lambda x: tf.where(x<0, tf.exp(0.5*x)-1, tf.where(x<c, tf.log(1+tf.exp(x)), x)-np.log(2))
+dnl  = lambda x: tf.where(x<0, 0.50*tf.exp(0.5*x), 1/(1+tf.exp(-x)))
+d2nl = lambda x: tf.where(x<0, 0.25*tf.exp(0.5*x), 
+                            tf.where(x<c, tf.exp(-x)/tf.square(1+tf.exp(-x)), tf.zeros_like(x)))
+'''
+
+pow_10 = lambda x, name: tf.pow(np.array(10,dtype=FDTYPE), tf.Variable(x, dtype=FDTYPE, name="log_" + name),
+                                name=name)
+
 # =====================            
 # Kernel related
 # =====================            
-
-
 
 class LiteModel:
 
 
     def __init__(self, kernel, alpha = None, points = None, 
-                init_log_lam = 0.0, log_lam_weights=-3):
+                init_log_lam = 0.0, log_lam_weights=-3, lite=False):
         
         self.kernel = kernel
         self.alpha   = alpha
 
         with tf.name_scope("regularizers"):
 
-            self.lam_norm    = 10**tf.Variable(init_log_lam, dtype=FDTYPE,   name="log_lam_norm")
-            self.lam_alpha   = 10**tf.Variable(init_log_lam, dtype=FDTYPE,   name="log_lam_alpha")
-            self.lam_curve   = 10**tf.Variable(init_log_lam, dtype=FDTYPE,   name="log_lam_curve")
-            self.lam_weights = 10**tf.constant(log_lam_weights, dtype=FDTYPE,name="log_lam_weights")
+            self.lam_norm    = pow_10(init_log_lam, "lam_norm")
+            if lite:
+                self.lam_alpha = tf.identity(self.lam_norm, name="lam_alpha")
+                self.lam_curve = tf.constant(0.0, dtype=FDTYPE, name="lam_curve")
+                self.lam_weights = tf.constant(0.0, dtype=FDTYPE, name="lam_weights")
+            else:
+                self.lam_alpha   = pow_10(init_log_lam, "lam_alpha")
+                self.lam_curve   = pow_10(init_log_lam, "lam_curve")
+                self.lam_weights = pow_10(init_log_lam, "lam_weights")
 
         if points is not None:
             self.set_points(points)
@@ -79,7 +101,7 @@ class LiteModel:
 
         return score, H, G, C, data
 
-    def opt_score(self, data=None, lam_norm=0.0, lam_alpha=0.0, lam_curve=0.0, lam_weights=0.0):
+    def opt_score(self, data=None):
         '''
         compute regularised score and returns a handle for assign optimal alpha
         '''
@@ -94,19 +116,16 @@ class LiteModel:
         curve  =  tf.einsum('i,ij,j', alpha_sg, C, alpha_sg)
         
         w_norm = self.get_weights_norm()
-        loss   =  score + 0.5 * (   lam_norm  * r_norm + 
-                                    lam_alpha * l_norm + 
-                                    curve * lam_curve + 
-                                    lam_weights * w_norm)
 
         alpha = tf.matrix_solve(G + 
-                                self.K*lam_norm + 
-                                tf.eye(self.npoint, dtype=FDTYPE)*lam_alpha + 
-                                C * lam_curve, 
+                                self.K*self.lam_norm + 
+                                tf.eye(self.npoint, dtype=FDTYPE)*self.lam_alpha + 
+                                C * self.lam_curve, 
                                 -H[:,None])[:,0]
+
         alpha_assign_opt = tf.assign(self.alpha, alpha)
 
-        return alpha_assign_opt, loss, score, data, r_norm, l_norm
+        return alpha_assign_opt, score
         
     def val_score(self, train_data=None, val_data=None):
 
@@ -123,7 +142,7 @@ class LiteModel:
         l_norm =  self.get_fun_l2_norm()
         curve = tf.einsum('i,ij,j', self.alpha, C, self.alpha)
         w_norm =  self.get_weights_norm()
-        loss   =  score + 0.5 * w_norm * self.lam_weights
+        loss   =  score + 0.5 * (w_norm * self.lam_weights)
 
         return loss, score, train_data, val_data, r_norm, l_norm, curve, w_norm
 
@@ -174,6 +193,13 @@ class LiteModel:
         hess = self.kernel.get_hess(self.X, data)
         return tf.tensordot(self.alpha, hess, axes=[[0],[0]])
 
+    def evaluate_grad_fun(self, data):
+        
+        grad, gram = self.kernel.get_grad_gram(self.X, data)
+        grad = tf.tensordot(self.alpha, grad, axes=[[0],[0]])
+        fun  = tf.tensordot(self.alpha, gram, axes=[[0],[0]])
+        return grad, fun
+
     def evaluate_hess_grad_fun(self, data):
         
         hess, grad, gram = self.kernel.get_hess_grad_gram(self.X, data)
@@ -186,7 +212,7 @@ class LiteModel:
 
     def get_fun_l2_norm(self):
         
-        return tf.reduce_sum(self.alpha**2)
+        return tf.reduce_sum(tf.square(self.alpha))
 
     def get_fun_rkhs_norm(self, K=None):
         
@@ -226,6 +252,9 @@ class Kernel:
     def get_hess_grad(self, X, Y):
         raise(NotImplementedError)
 
+    def get_grad_gram(self, X, Y):
+        raise(NotImplementedError)
+
     def get_hess_grad_gram(self, X, Y):
         raise(NotImplementedError)
 
@@ -242,7 +271,9 @@ class MixtureKernel(Kernel):
         self.nkernel = len(kernels)
 
     def get_gram_matrix(self, X, Y):
-        out = 0
+
+        out = tf.zeros([], dtype=FDTYPE)
+
         for ki in range(self.nkernel):
             out = out + self.kernels[ki].get_gram_matrix(X, Y) * self.props[ki]
 
@@ -250,32 +281,59 @@ class MixtureKernel(Kernel):
 
     def get_sec_grad(self, X, Y):
         
-        grad = 0
-        sec  = 0
+        grad = tf.zeros([], dtype=FDTYPE)
+        sec  = tf.zeros([], dtype=FDTYPE)
+
         for ki in range(self.nkernel):
             s, g  = self.kernels[ki].get_sec_grad(X, Y)
             grad  = grad + g * self.props[ki]
             sec   = sec  + s * self.props[ki]
-
-        return grad, sec
+        return sec, grad
 
 
     def get_grad(self, X, Y):
 
-        out = 0
+        out = tf.zeros([], dtype=FDTYPE)
+
         for ki in range(self.nkernel):
             out = out + self.kernels[ki].get_grad(X, Y) * self.props[ki]
         return out
 
+    def get_grad_gram(self, X, Y):
+
+        grad = tf.zeros([], dtype=FDTYPE)
+        gram = tf.zeros([], dtype=FDTYPE)
+
+        for ki in range(self.nkernel):
+            g, k  = self.kernels[ki].get_grad_gram(X, Y)
+            grad  = grad + g * self.props[ki]
+            gram  = gram + k * self.props[ki]
+        return  grad, gram
+
     def get_hess(self, X, Y):
 
-        out = 0
+        out = tf.zeros([], dtype=FDTYPE)
         for ki in range(self.nkernel):
             out = out + self.kernels[ki].get_hess(X, Y) * self.props[ki]
         return out
 
+    def get_hess_grad_gram(self, X, Y):
+
+        hess = tf.zeros([], dtype=FDTYPE)
+        grad = tf.zeros([], dtype=FDTYPE)
+        gram = tf.zeros([], dtype=FDTYPE)
+
+        for ki in range(self.nkernel):
+            h, g, k  = self.kernels[ki].get_hess_grad_gram(X, Y)
+            hess  = hess + h * self.props[ki]
+            grad  = grad + g * self.props[ki]
+            gram  = gram + k * self.props[ki]
+        return  hess, grad, gram
+
     def get_weights_norm(self):
-        out = 0
+
+        out = tf.zeros([], dtype=FDTYPE)
+
         for ki in range(self.nkernel):
             out = out + self.kernels[ki].get_weights_norm()
         return out
@@ -418,6 +476,20 @@ class CompositeKernel(Kernel):
 
         return dkdx
 
+    def get_grad_gram(self, X, Y):
+
+        X = self._net_forward(X)
+        d2ydx2, dydx, Y, _ = self.network.get_sec_grad_data(data=Y)
+        hessK, gradK = self.kernel.get_hess_grad(X, Y)
+
+        input_idx = construct_index(self.network.ndim_in)
+
+        dkdx = tf.einsum('ijk,kj'+input_idx+'->ij'+input_idx,
+                        gradK, dydx)
+        
+        gram = self.kernel.get_gram_matrix(X, Y)
+        return dkdx, gram
+
     def get_hess(self, X, Y):
 
         X = self._net_forward(X)
@@ -493,7 +565,7 @@ class GaussianKernel(Kernel):
     def __init__(self, sigma = 1):
         
         with tf.name_scope("GaussianKernel"):
-            self.sigma  = 10**tf.Variable(sigma, dtype=FDTYPE, name="log_sigma")
+            self.sigma  = pow_10(sigma, "sigma")
         self.pdist2 = None
 
     def get_pdist2(self, X, Y):
@@ -503,9 +575,9 @@ class GaussianKernel(Kernel):
         if Y.shape.ndims==1:
             Y = Y[None,:]
         assert X.shape[1] == Y.shape[1]
-        pdist2 = tf.reduce_sum(X**2, axis=1, keep_dims=True)
+        pdist2 = tf.reduce_sum(tf.square(X), axis=1, keep_dims=True)
         pdist2 -= 2.0*tf.matmul(X, Y, transpose_b = True)
-        pdist2 += tf.matrix_transpose(tf.reduce_sum(Y**2, axis=1, keep_dims=True))
+        pdist2 += tf.matrix_transpose(tf.reduce_sum(tf.square(Y), axis=1, keep_dims=True))
         self.pdist2 = pdist2
         return pdist2
 
@@ -557,13 +629,26 @@ class GaussianKernel(Kernel):
         # K is a vector that has derivatives on all points
         K1 = (gram[:,:,None]* D)
         
-        D2 = D**2
-        I  = tf.ones( D.shape[-1].value )/self.sigma
+        D2 = tf.square(D)
+        I  = tf.ones( D.shape[-1].value, dtype=FDTYPE)/self.sigma
 
         # K is a vector that has the hessian on all points
         K2 = gram[:,:,None] * (D2 - I)
 
         return K2, K1
+
+    def get_grad_gram(self, X, Y):
+
+        gram = self.get_gram_matrix(X, Y)
+
+        # D contrains the vector difference between pairs of x_m and y_i
+        # divided by sigma
+        D = (tf.expand_dims(X, 1) - tf.expand_dims(Y, 0))/self.sigma
+
+        # K is a vector that has derivatives on all points
+        K1 = (gram[:,:,None]* D)
+        
+        return  K1, gram
 
     def get_sec_grad_gram(self, X, Y):
 
@@ -576,8 +661,8 @@ class GaussianKernel(Kernel):
         # K is a vector that has derivatives on all points
         K1 = (gram[:,:,None]* D)
         
-        D2 = D**2
-        I  = tf.ones( D.shape[-1].value )/self.sigma
+        D2 = tf.square(D)
+        I  = tf.ones( D.shape[-1].value, dtype=FDTYPE)/self.sigma
 
         # K is a vector that has the hessian on all points
         K2 = gram[:,:,None] * (D2 - I)
@@ -700,7 +785,7 @@ class RationalQuadraticKernel:
 
 
 
-class PolynomialKernel:
+class PolynomialKernel(Kernel):
 
     def __init__(self, d, c=1):
         
@@ -733,6 +818,13 @@ class PolynomialKernel:
         else:
             inner = self.get_inner(X,Y)[:,:,None,None]
             return self.d*(self.d-1)*(inner+self.c)**(self.d-2) * (X[:,None,None,:]*X[:,None,:,None])
+
+    def get_grad_gram(self, X, Y):
+
+        inner = self.get_inner(X,Y)
+        grad = self.d * (inner[...,None]+self.c)**(self.d-1) * X[:,None,:] 
+
+        return grad, (inner+self.c)**self.d
 
     def get_sec_grad(self, X, Y):
 
@@ -829,10 +921,10 @@ class Network(object):
         self.ndim_in = ndim_in
 
         with tf.name_scope(scope):
-            W = tf.Variable(init_mean + np.random.randn(*(ndim_out + ndim_in)).astype(FDTYPE)*init_std,
-                            name="W")
-            b = tf.Variable(np.random.randn(1, *ndim_out).astype(FDTYPE)*init_std,
-                            name="b")
+            W = tf.Variable(init_mean + np.random.randn(*(ndim_out + ndim_in))*init_std,
+                            name="W", dtype=FDTYPE)
+            b = tf.Variable(init_mean + np.random.randn(1, *ndim_out)*init_std,
+                            name="b", dtype=FDTYPE)
 
         self.param = OrderedDict([('W', W), ('b', b)])
         self.scope=scope
@@ -879,7 +971,7 @@ class Network(object):
 
     def get_weights_norm(self):
 
-        return sum(map(lambda p: tf.reduce_sum(p**2), self.param.values()))
+        return sum(map(lambda p: tf.reduce_sum(tf.square(p)), self.param.values()))
 
     def get_grad_param(self, data):
 
@@ -1024,21 +1116,14 @@ class Network(object):
         
         size = 0.0
         for _, v in self.param.items():
-            size += tf.reduce_sum(v**2.0) 
+            size += tf.reduce_sum(tf.square(v))
         return size 
 
 class LinearSoftNetwork(Network):
 
     ''' y =  ReLU( W \cdot x + b ) '''
 
-    def __init__(self, ndim_in, ndim_out, 
-                init_std = 1.0, init_mean = 0.0, 
-                #nl   = lambda x: tf.where(x<30, tf.nn.softplus(x), x),
-                #dnl  = lambda x: 1/(1+tf.exp(-x)),
-                #d2nl = lambda x: tf.where(tf.logical_and(-30<x, x<30), tf.exp(x-2*tf.log(1+tf.exp(x))), tf.zeros_like(x))):
-                nl   = tf.nn.softplus,
-                dnl  = lambda x: 1/(1+tf.exp(-x)),
-                d2nl = lambda x: tf.exp(x-2*tf.log(1+tf.exp(x))), scope="fc1"):
+    def __init__(self, ndim_in, ndim_out, init_std = 1.0, init_mean = 0.0, scope="fc1"):
         
         super(LinearSoftNetwork, self).__init__(ndim_in, ndim_out, init_mean, init_std, scope)
         self.nl = nl
@@ -1118,7 +1203,7 @@ class LinearSoftNetwork(Network):
         grad = self.dnl(lin_out)[:,:,None] * W[None,:,:]
         grad = tf.transpose(grad, [1,0,2])
 
-        sec = self.d2nl(lin_out)[:,:,None] * W[None,:,:]**2
+        sec = self.d2nl(lin_out)[:,:,None] * tf.square(W[None,:,:])
         sec = tf.transpose(sec, [1,0,2])
         return sec, grad, out, data
 
@@ -1145,13 +1230,159 @@ class LinearSoftNetwork(Network):
 
         return hess, grad, out, data
 
+class DenseLinearSoftNetwork(Network):
+
+    ''' y =  ReLU( W \cdot x + b ) '''
+
+    def __init__(self, ndim_in, ndim_out, init_std = 1.0, init_mean = 0.0, scope="skip"):
+        
+        self.ndim_out  = ndim_out
+        self.ndim_in = ndim_in
+        self.nin     = len(ndim_in)
+
+        self.param = OrderedDict()
+
+        with tf.name_scope(scope):
+
+            for i in range(self.nin):
+                W = tf.Variable(init_mean + np.random.randn(*(ndim_out + ndim_in[i]))*init_std,
+                                name="W"+str(i), dtype=FDTYPE)
+                self.param["W"+str(i)] = W
+
+            self.param["b"] = tf.Variable(init_mean + np.random.randn(1, *ndim_out)*init_std,
+                            name="b", dtype=FDTYPE)
+
+        self.scope=scope
+        self.nl = nl
+        self.dnl = dnl
+        self.d2nl = d2nl
+
+
+    def forward_array(self, data, param = None):
+        
+        if param is None:
+            param = self.param
+        
+        
+        data_tensor  = [tf.placeholder(FDTYPE, shape= (None, ) + self.ndim_in[i]) for i in range(self.nin)]
+        
+        out = 0.0
+        for i in range(self.nin):
+            W = param['W'+str(i)]
+            out += tf.matmul(data_tensor[i], W,  transpose_b = True)
+
+        b = param['b']
+        out += b
+        out = self.nl(out)
+
+        sess = tf.Session(config=config)
+        init = tf.global_variables_initializer()
+        sess.run(init)
+
+        out_value = sess.run(out, feed_dict = dict(zip(data_tensor, data)) )
+
+        return out_value
+
+    def forward_tensor(self, data, param = None):
+        
+        if param is None:
+            param = self.param
+            
+        out = 0.0
+        for i in range(self.nin):
+            W = param['W'+str(i)]
+            out += tf.matmul(data[i], W,  transpose_b = True)
+        b = param['b']
+        out += b
+        out = self.nl(out)
+
+        return out
+
+    def get_grad_data(self, data=None):
+
+        param = self.param
+        
+        if data is None:
+            data = [tf.placeholder(FDTYPE, shape= (None, ) + self.ndim_in[i]) for i in range(self.nin)]
+
+        lin_out = 0.0
+        for i in range(self.nin):
+            W = param['W'+str(i)]
+            lin_out += tf.matmul(data[i], W,  transpose_b = True)
+        b = param['b']
+        lin_out += b
+
+        out  = self.nl(lin_out)
+        grad = [self.dnl(lin_out)[:,:,None] * param['W'+str(i)][None,:,:] for i in range(self.nin)]
+        grad = [tf.transpose(grad[i], [1,0,2]) for i in range(self.nin)]
+
+        return grad, out, data
+  
+    def get_sec_grad_data(self, data=None):
+
+        param = self.param
+
+        if data is None:
+            data = [tf.placeholder(FDTYPE, shape= (None, ) + self.ndim_in[i]) for i in range(self.nin)]
+
+        lin_out = 0.0
+        for i in range(self.nin):
+            W = param['W'+str(i)]
+            lin_out += tf.matmul(data[i], W,  transpose_b = True)
+        b = param['b']
+        lin_out += b
+        out  = self.nl(lin_out)
+
+        grad = [self.dnl(lin_out)[:,:,None] * param["W"+str(i)][None,:,:] for i in range(self.nin)]
+        grad = [tf.transpose(grad[i], [1,0,2]) for i in range(self.nin)]
+
+        sec  = [self.d2nl(lin_out)[:,:,None] * tf.square(param["W"+str(i)][None,:,:]) for i in range(self.nin)]
+        sec  = [tf.transpose(sec[i], [1,0,2]) for i in range(self.nin)]
+        return sec, grad, out, data
+
+    def get_hess_cross_grad_data(self, data = None):
+
+        if data is None:
+            data = [tf.placeholder(FDTYPE, shape= (None, ) + self.ndim_in[i]) for i in range(self.nin)]
+
+        param = self.param
+
+        lin_out = 0.0
+        for i in range(self.nin):
+            W = param['W'+str(i)]
+            lin_out += tf.matmul(data[i], W,  transpose_b = True)
+        b = param['b']
+        lin_out += b
+        out  = self.nl(lin_out)
+
+        grad = [self.dnl(lin_out)[:,:,None] * param["W"+str(i)][None,:,:] for i in range(self.nin)]
+        grad = [tf.transpose(grad[i], [1,0,2]) for i in range(self.nin)]
+
+        hess  = [self.d2nl(lin_out)[:,:,None,None] * param["W"+str(i)][None,:,:,None] * param["W"+str(i)][None,:,None,:] 
+                    for i in range(self.nin)]
+        hess  = [tf.transpose(hess[i], [1,0,2,3]) for i in range(self.nin)]
+
+        cross = self.d2nl(lin_out)[:,:,None,None] * param["W"+str(0)][None,:,:,None] * param["W"+str(1)][None,:,None,:] 
+        cross = tf.transpose(cross, [1,0,2,3])
+
+        return hess, cross, grad, out, data
+
 class DeepNetwork(Network):
 
-    def __init__(self, layers):
+    def __init__(self, layers, init_mean = 0.0, init_std = 1.0, ndim_out = None, add_skip=False):
+
+        self.ndim_in  = layers[0].ndim_in
+        if add_skip:
+            assert ndim_out is not None
+            self.ndim_out = ndim_out
+        else:
+            self.ndim_out = layers[-1].ndim_out
+        self.nlayer   = len(layers)
 
         self.layers   = layers
-        self.nlayer   = len(layers)
         self.param    = {}
+        self.add_skip = add_skip
+
         for i in range(self.nlayer-1):
             assert layers[i+1].ndim_in == layers[i].ndim_out
 
@@ -1160,16 +1391,25 @@ class DeepNetwork(Network):
             p = l.param
             for k, v in p.items():
                 self.param[k+layer_str] = v
-
-        self.ndim_in  = self.layers[0].ndim_in
-        self.ndim_out = self.layers[-1].ndim_out
         
+        if self.add_skip:
+
+            self.skip_layer = DenseLinearSoftNetwork([self.ndim_in, layers[-1].ndim_out], self.ndim_out, 
+                                init_mean=init_mean, init_std=init_std, scope="skip")
+
+            for k, v in self.skip_layer.param.items():
+                self.param[k+"skip"] = v
+
     def forward_tensor(self, data):
         
         d = data
 
         for i in range(self.nlayer):
             d = self.layers[i].forward_tensor(d) 
+        
+        if self.add_skip:
+            d = self.skip_layer.forward_tensor([data,d])
+
         return d
 
     def forward_array(self, data):
@@ -1177,6 +1417,9 @@ class DeepNetwork(Network):
         d = data
         for i in range(self.nlayer):
             d = self.layers[i].forward_array(d) 
+
+        if self.add_skip:
+            d = self.skip_layer.forward_array([data,d])
         return d
 
 
@@ -1203,6 +1446,21 @@ class DeepNetwork(Network):
                             +o_idx_h+"i"+i_idx_l,  this_grad, grad)
 
             i_idx_l = construct_index(layer.ndim_in, s="o")
+        
+        if self.add_skip:
+            
+            layer = self.skip_layer
+            skip_grad, skip_out, _ = layer.get_grad_data([data,out])
+
+            i_idx_h = construct_index(layer.ndim_in[1], s="j")
+            o_idx_h = construct_index(layer.ndim_out, s="a")
+
+            grad = tf.einsum(o_idx_h+"i"+i_idx_h+","\
+                            +i_idx_h+"i"+i_idx_l+"->"\
+                            +o_idx_h+"i"+i_idx_l,  skip_grad[1], grad)
+
+            grad = grad + skip_grad[0]
+            out  = skip_out
 
         return grad, out, data
             
@@ -1213,10 +1471,10 @@ class DeepNetwork(Network):
 
         sec, grad, out, _ = self.layers[0].get_sec_grad_data(data)
 
+        i_idx_l = construct_index(self.layers[0].ndim_in, s="o")
 
         for i in range(1,self.nlayer):
 
-            i_idx_l = construct_index(self.layers[i-1].ndim_in, s="o",n=1)
 
             layer = self.layers[i]
 
@@ -1234,11 +1492,47 @@ class DeepNetwork(Network):
                              o_idx_h + "i"+i_idx_l,  this_hess, grad, grad) + \
                    tf.einsum(o_idx_h+"i"+i_idx_h_1+","+
                              i_idx_h_1+"i"+i_idx_l+"->"+
-                             o_idx_h+"i"+i_idx_l,  this_grad, sec)
+                             o_idx_h+"i"+i_idx_l,  this_grad, sec) 
 
             grad = tf.einsum(o_idx_h+"i"+i_idx_h_1+","\
                             +i_idx_h_1+"i"+i_idx_l+"->"\
                             +o_idx_h+"i"+i_idx_l,  this_grad, grad)
+
+            i_idx_l = construct_index(self.layers[i-1].ndim_in, s="o",n=1)
+
+        if self.add_skip:
+
+            layer = self.skip_layer
+
+            skip_sec, skip_grad, skip_out, _ = layer.get_sec_grad_data([data,out])
+
+            i_idx_h   = construct_index(layer.ndim_in[1], s="j", n=2)
+            i_idx_h_1 = i_idx_h[:len(i_idx_h)/2]
+            i_idx_h_2 = i_idx_h[len(i_idx_h)/2:]
+            i_idx_h_c_1   = construct_index(layer.ndim_in[0], s="j", n=1)
+            i_idx_h_c_2   = construct_index(layer.ndim_in[1], s="p", n=1)
+            o_idx_h   = construct_index(layer.ndim_out, s="a")
+
+            this_hess, this_cross, _, _, _ = layer.get_hess_cross_grad_data([data,out])
+
+            sec =  tf.einsum(o_idx_h+"i"+i_idx_h+","+
+                             i_idx_h_1+"i"+i_idx_l+","+
+                             i_idx_h_2+"i"+i_idx_l+"->"+
+                             o_idx_h + "i"+i_idx_l,  this_hess[1], grad, grad) + \
+                   tf.einsum(o_idx_h+"i"+i_idx_h_1+","+
+                             i_idx_h_1+"i"+i_idx_l+"->"+
+                             o_idx_h+"i"+i_idx_l,  skip_grad[1], sec) + \
+                   tf.einsum(o_idx_h+"i"+i_idx_h_c_1+i_idx_h_c_2+","+
+                             i_idx_h_c_2+"i"+i_idx_h_c_1+"->"+
+                             o_idx_h+"i"+i_idx_h_c_1, this_cross, grad) * 2
+
+            grad = tf.einsum(o_idx_h+"i"+i_idx_h_1+","\
+                            +i_idx_h_1+"i"+i_idx_l+"->"\
+                            +o_idx_h+"i"+i_idx_l,  skip_grad[1], grad)
+
+            sec  = sec  + skip_sec[0]
+            grad = grad + skip_grad[0]
+            out  = skip_out
 
         return sec, grad, out, data
 
@@ -1249,11 +1543,12 @@ class DeepNetwork(Network):
 
         hess, grad, out, _ = self.layers[0].get_hess_grad_data(data)
 
+        i_idx_l = construct_index(self.layers[0].ndim_in, s="o",n=2)
+        i_idx_l_1 = i_idx_l[:len(i_idx_l)/2]
+        i_idx_l_2 = i_idx_l[len(i_idx_l)/2:]
+
         for i in range(1,self.nlayer):
 
-            i_idx_l = construct_index(self.layers[i-1].ndim_in, s="o",n=2)
-            i_idx_l_1 = i_idx_l[:len(i_idx_l)/2]
-            i_idx_l_2 = i_idx_l[len(i_idx_l)/2:]
 
             layer = self.layers[i]
 
@@ -1277,6 +1572,44 @@ class DeepNetwork(Network):
                             +i_idx_h_1+"i"+i_idx_l_1+"->"\
                             +o_idx_h+"i"+i_idx_l_1,  this_grad, grad)
 
+            i_idx_l = construct_index(layer.ndim_in, s="o",n=2)
+            i_idx_l_1 = i_idx_l[:len(i_idx_l)/2]
+            i_idx_l_2 = i_idx_l[len(i_idx_l)/2:]
+
+        if self.add_skip:
+
+            layer = self.skip_layer
+
+            skip_hess, skip_cross, skip_grad, skip_out, _ = layer.get_hess_cross_grad_data([data,out])
+
+            i_idx_h = construct_index(layer.ndim_in[1], s="j", n=2)
+            i_idx_h_1 = i_idx_h[:len(i_idx_h)/2]
+            i_idx_h_2 = i_idx_h[len(i_idx_h)/2:]
+            i_idx_h_c_1   = construct_index(layer.ndim_in[0], s="q", n=1)
+            i_idx_h_c_2   = construct_index(layer.ndim_in[1], s="u", n=1)
+            o_idx_h = construct_index(layer.ndim_out, s="a")
+
+
+            hess_cross = tf.einsum(o_idx_h+"i"+i_idx_h_c_1+i_idx_h_c_2+","+
+                             i_idx_h_c_2+"i"+i_idx_h_1+"->"+
+                             o_idx_h+"i"+i_idx_h_c_1+i_idx_h_1, skip_cross, grad)
+
+            hess =  tf.einsum(o_idx_h +"i"+i_idx_h  +","+
+                             i_idx_h_1+"i"+i_idx_l_1+","+
+                             i_idx_h_2+"i"+i_idx_l_2+"->"+
+                             o_idx_h  +"i"+i_idx_l,  skip_hess[1], grad, grad) + \
+                   tf.einsum(o_idx_h  +"i"+i_idx_h_1+","+
+                             i_idx_h_1+"i"+i_idx_l  +"->"+
+                             o_idx_h  +"i"+i_idx_l,  skip_grad[1], hess) + \
+                   hess_cross + tf.transpose(hess_cross, [0,1,3,2])
+
+            grad = tf.einsum(o_idx_h+"i"+i_idx_h_1+","\
+                            +i_idx_h_1+"i"+i_idx_l_1+"->"\
+                            +o_idx_h+"i"+i_idx_l_1,  skip_grad[1], grad)
+
+            hess = hess + skip_hess[0]
+            grad = grad + skip_grad[0]
+            out  = skip_out
 
         return hess, grad, out, data
         
@@ -1388,7 +1721,7 @@ class SquareNetwork(Network):
         b = param['b']
         out = tf.matmul(data_tensor, W,  transpose_b = True)
         out += b
-        out = out ** 2.0
+        out = tf.square(out)
         
         sess = tf.Session(config=config)
         init = tf.global_variables_initializer()
@@ -1408,7 +1741,7 @@ class SquareNetwork(Network):
         b = param['b']
         out = tf.matmul(data, W,  transpose_b = True)
         out += b
-        out = out ** 2.0
+        out = tf.square(out)
 
         if single:
             out = out[0]
@@ -1706,7 +2039,7 @@ class KernelNetModel():
 
     def get_fun_l2_norm(self):
         
-        return tf.reduce_sum(self.alpha**2)
+        return tf.reduce_sum(tf.square(self.alpha))
 
     def get_fun_rkhs_norm(self, K=None):
         
