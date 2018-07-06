@@ -1,12 +1,11 @@
 import numpy as np
 from nystrom_kexpfam.density import log_gaussian_pdf, sample_gaussian
-from nystrom_kexpfam.log import logger
 from nystrom_kexpfam.mathematics import log_mean_exp
 from nystrom_kexpfam.visualisation import visualise_array_2d
 
 
 def compute_avg_acceptance(q0, logq, dlogq, sigma_p, num_steps, step_size, plot=False,
-                           X=None, est=None, plot_i=None, plot_j=None, ax=None, plot_only_trajectory=False):
+                           X=None, est_grad=None, plot_i=None, plot_j=None, ax=None, plot_only_trajectory=False):
     """
     Computes HMC trajectory using provided gradient handle, and computes acceptance
     rate using provided log_pdf handle.
@@ -34,12 +33,9 @@ def compute_avg_acceptance(q0, logq, dlogq, sigma_p, num_steps, step_size, plot=
     p0 = p_sample()
     
     # integrate HMC trajectory
-    logger.info("Simulating trajectory for L=%d steps of size %.2f" % \
-                     (num_steps, step_size))
     Qs, Ps = leapfrog(q0, dlogq, p0, dlogp, step_size, num_steps)
     
     # compute average acceptance probabilities (using true log_pdf, not estimated one)
-    logger.info("Computing average acceptance probabilities")
     log_acc = compute_log_accept_pr(q0, p0, Qs, Ps, logq, logp)
     acc_mean = np.exp(log_mean_exp(log_acc))
     
@@ -61,7 +57,7 @@ def compute_avg_acceptance(q0, logq, dlogq, sigma_p, num_steps, step_size, plot=
             X_grid = np.array([XX.ravel(), YY.ravel()]).T
             
             # compute estimated gradients on grid
-            grad_grid = est.grad(X_grid)
+            grad_grid = est_grad(X_grid)
             grad_grid_norm = np.linalg.norm(grad_grid, axis=1)
             
             visualise_array_2d(Xs, Ys, grad_grid_norm.reshape(len(Ys), len(Xs)).T,

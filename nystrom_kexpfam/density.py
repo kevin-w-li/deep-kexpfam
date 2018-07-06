@@ -113,3 +113,24 @@ def rings_log_pdf_grad(X, sigma=0.1, radia=np.array([1, 3])):
         result[:, 2:] = -X[:, 2:] / (sigma ** 2)
     
     return result
+
+def rings_log_pdf(X, sigma=0.1, radia=np.array([1, 3])):
+
+    weights = 2 * np.pi * radia
+    weights /= np.sum(weights)
+    
+    norms = np.linalg.norm(X[:, :2], axis=1)
+
+    result = np.zeros(np.shape(X)[0])
+
+    for i in range(len(X)):
+        log_pdf_components = -0.5 * (norms[i] - radia) ** 2 / (sigma ** 2) - \
+                              0.5 * np.log(2*np.pi*sigma**2) - \
+                              np.log(2*np.pi * radia)
+        result[i] = logsumexp(log_pdf_components + np.log(weights))
+    
+    if X.shape[1] > 2:
+        # stand+rd normal log pdf gradient
+        result += np.sum(-0.5*np.log(2*np.pi*sigma**2) -0.5 * (X[:, 2:]**2) / (sigma ** 2),1)
+    
+    return result
