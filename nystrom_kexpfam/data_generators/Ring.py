@@ -2,7 +2,7 @@ from abc import abstractmethod
 
 import numpy as np
 from nystrom_kexpfam.data_generators.Base import DataGenerator
-from nystrom_kexpfam.density import rings_log_pdf_grad, rings_sample
+from nystrom_kexpfam.density import rings_log_pdf_grad, rings_sample, rings_log_pdf
 
 
 class Ring(DataGenerator):
@@ -13,9 +13,16 @@ class Ring(DataGenerator):
         
         self.sigma = sigma
         self.radia = np.array([1, 3, 5])
+        self.name  = "ring"
         
     def grad_multiple(self, X):
         return rings_log_pdf_grad(X, self.sigma, self.radia)
+
+    def logpdf(self, X):
+        return rings_log_pdf(X, self.sigma, self.radia)
+
+    def log_pdf(self,X):
+        return self.logpdf(self,X)
     
     @abstractmethod
     def sample(self, N):

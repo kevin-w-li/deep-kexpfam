@@ -177,6 +177,7 @@ class GaussianGrid(Mixture):
         mus = mus[inds]
         
         self.sigma=sigma
+        self.name = "grid"
         
         Sigma = np.eye(D) * sigma
         components = []

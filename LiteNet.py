@@ -3,7 +3,7 @@ import numpy as np
 from collections import OrderedDict
 import operator
 import itertools
-import time
+from time import time
 import warnings
 
 config = tf.ConfigProto()
@@ -32,8 +32,11 @@ d2nl = lambda x: tf.where(x<0, 0.25*tf.exp(0.5*x),
                             tf.where(x<c, tf.exp(-x)/tf.square(1+tf.exp(-x)), tf.zeros_like(x)))
 '''
 
-pow_10 = lambda x, name: tf.pow(np.array(10,dtype=FDTYPE), tf.Variable(x, dtype=FDTYPE, name="log_" + name),
-                                name=name)
+def pow_10(x, name, var_dict={}): 
+
+    var = tf.Variable(x, dtype=FDTYPE, name="log_" + name, **var_dict)
+
+    return tf.pow(np.array(10,dtype=FDTYPE), var, name=name)
 
 # =====================            
 # Kernel related
@@ -43,22 +46,24 @@ class LiteModel:
 
 
     def __init__(self, kernel, alpha = None, points = None, 
-                init_log_lam = 0.0, log_lam_weights=-3, lite=False):
+                init_log_lam = 0.0, log_lam_weights=-3, simple_lite=False, 
+                lam = None):
         
         self.kernel = kernel
         self.alpha   = alpha
-
-        with tf.name_scope("regularizers"):
-
-            self.lam_norm    = pow_10(init_log_lam, "lam_norm")
-            if lite:
-                self.lam_alpha = tf.identity(self.lam_norm, name="lam_alpha")
-                self.lam_curve = tf.constant(0.0, dtype=FDTYPE, name="lam_curve")
-                self.lam_weights = tf.constant(0.0, dtype=FDTYPE, name="lam_weights")
-            else:
+        
+        if simple_lite:
+            assert lam is not None
+            self.lam_norm = lam
+            self.lam_alpha = lam
+            self.lam_curve = tf.constant(0.0, dtype=FDTYPE, name="lam_curve")
+            self.lam_weights = tf.constant(0.0, dtype=FDTYPE, name="lam_weights")
+        else:
+            with tf.name_scope("regularizers"):
+                self.lam_norm    = pow_10(init_log_lam, "lam_norm")
                 self.lam_alpha   = pow_10(init_log_lam, "lam_alpha")
                 self.lam_curve   = pow_10(init_log_lam, "lam_curve")
-                self.lam_weights = pow_10(init_log_lam, "lam_weights")
+                self.lam_weights = pow_10(log_lam_weights, "lam_weights", var_dict=dict(trainable=False))
 
         if points is not None:
             self.set_points(points)
@@ -125,7 +130,7 @@ class LiteModel:
 
         alpha_assign_opt = tf.assign(self.alpha, alpha)
 
-        return alpha_assign_opt, score
+        return alpha_assign_opt, score, data
         
     def val_score(self, train_data=None, val_data=None):
 
@@ -562,10 +567,13 @@ class GaussianKernel(Kernel):
     Y: input data, rank 2
     '''
 
-    def __init__(self, sigma = 1):
+    def __init__(self, sigma = 1, trainable=True):
         
-        with tf.name_scope("GaussianKernel"):
-            self.sigma  = pow_10(sigma, "sigma")
+        if type(sigma) in [int,float]:
+            with tf.name_scope("GaussianKernel"):
+                self.sigma  = pow_10(sigma, "sigma", var_dict=dict(trainable=trainable))
+        elif type(sigma)==tf.Tensor:
+            self.sigma = sigma
         self.pdist2 = None
 
     def get_pdist2(self, X, Y):
@@ -1039,19 +1047,19 @@ class Network(object):
             return gradient node, output node and input (feed) node
         '''
         
-        t0 = time.time()
+        t0 = time()
         son = SumOutputNet(self)
         grad = []
-        t0 = time.time()
-        t1 = time.time()
+        t0 = time()
+        t1 = time()
         print 'building grad output'
         for oi in xrange(self.ndim_out):
             g = tf.gradients(son.sum_output[oi], son.batch)[0]
             grad.append(g)
-            print '\r%3d out of %3d took %5.3f sec' % ( oi, self.ndim_out, time.time()-t1),
-            ti = time.time()
+            print '\r%3d out of %3d took %5.3f sec' % ( oi, self.ndim_out, time()-t1),
+            ti = time()
         grad   = tf.stack(grad)
-        print 'building grad output took %.3f sec' % (time.time() - t0)
+        print 'building grad output took %.3f sec' % (time() - t0)
 
         return grad, tf.stack(son.output), son.batch
 
@@ -1075,7 +1083,7 @@ class Network(object):
         unraveled_index = np.array(np.unravel_index(raveled_index, self.ndim_in))
 
         for oi in xrange(self.ndim_out):
-            t0 = time.time()
+            t0 = time()
             print 'building output %d out of %d' % (oi+1, self.ndim_out)
 
             # tf.gather_nd(A, idx) takes tensor A and return elements whose indices are specified in idx
@@ -1095,7 +1103,7 @@ class Network(object):
                                                 np.tile(unraveled_index[:,i],[self.batch_size,1])]
                                         )
                                     for i in raveled_index])
-            print 'took %.3f sec' % (time.time()-t0)
+            print 'took %.3f sec' % (time()-t0)
             sec.append(sec_oi_ii)
         sec_stack = tf.stack(sec)
         # make the output shape [ ndim_out, batch_size, prod(self.ndim_in) ]
@@ -1810,7 +1818,6 @@ class LinearReLUNetwork(Network):
         param = self.param
 
         # create input placeholder that has batch_size
-        data = tf.placeholder(FDTYPE, shape = (self.batch_size,) + self.ndim_in)
         data, single = self.reshape_data_tensor(data)
         W = param['W']
         out =   self.forward_tensor(data, param)
@@ -1886,6 +1893,103 @@ class ConvNetwork(Network):
             out = out[0]
         return out
 
+
+class DropoutNetwork(Network):
+
+    def __init__(self, ndim_in, p = 0.5, mode="test"):
+
+        self.ndim_in = ndim_in
+        self.ndim_out = ndim_in
+        self.mode = mode
+
+        self.p = p
+        self.no_need_proc = (self.p == 1.0 or self.mode == "test")
+        self.mask = None
+        self.param=dict()
+
+    def forward_array(self, data, mask = None):
+        
+        # only for testing purposes
+        if mask is None:
+            mask = (np.random.rand(*self.data.shape)<self.p)
+        
+        if self.no_need_proc:
+            return data
+        else:
+            return data * mask / self.p
+
+    def forward_tensor(self, data, mask=None):
+        
+        if self.no_need_proc:
+            self.mask = tf.ones(tf.shape(data))
+            return data 
+
+        data, single = self.reshape_data_tensor(data)
+
+        data_shape = tf.shape(data)
+        batch_size = data_shape[0]
+        m = len(self.ndim_in)
+
+        if mask is None:
+            mask = self.p
+            # mask += tf.tile(tf.random_uniform((1,)+self.ndim_in, seed=2018), multiples=[batch_size] + [1]*m)
+            mask += tf.random_uniform(data_shape, seed=2018)
+            mask = tf.floor(mask)
+
+        out = data / self.p * mask
+        self.mask = mask
+
+        if single:
+            out = out[0]
+
+        return out
+
+    def get_grad_data(self, data = None):
+            
+        if data is None:
+            data = tf.placeholder(FDTYPE, shape = (None,) + self.ndim_in)
+            
+        data_shape = tf.shape(data)
+        batch_size = data_shape[0]
+
+        # number of dims
+        m = len(self.ndim_in)
+        # total number of elements per data point
+        d = np.prod(self.ndim_in)
+
+        if self.no_need_proc:
+
+            grad = tf.eye(d, batch_shape=(batch_size,), dtype=FDTYPE)
+            out  = tf.identity(data)
+            self.mask = tf.ones(tf.shape(data), dtype=FDTYPE)
+            
+        else:
+
+            mask = tf.constant(self.p, dtype=FDTYPE)
+            #mask += tf.tile(tf.random_uniform((1,)+self.ndim_in, seed=2018), multiples=[batch_size]+[1]*m)
+            mask += tf.random_uniform(data_shape, seed=2018)
+            mask = tf.floor(mask)
+            out = data / self.p * mask
+            
+            grad = tf.matrix_diag(tf.reshape(mask,[batch_size, np.prod(self.ndim_in)]))
+            grad = grad / self.p
+            self.mask = mask
+        
+        grad = tf.reshape(grad, (batch_size,) + self.ndim_in + self.ndim_in)
+        grad = tf.transpose(grad, perm = range(1,m+1) + [0,] + range(m+1,2*m+1) )
+
+        return grad, out, data
+
+    def get_hess_grad_data(self, data=None):
+
+        grad, out, data = self.get_grad_data(data=data)
+        data_shape = tf.shape(data)
+        batch_size = data_shape[0]
+
+        #hess = tf.zeros(np.ones(m+1+m*2), dtype=FDTYPE)
+        hess = tf.zeros(self.ndim_in + (batch_size,) + self.ndim_in + self.ndim_in, dtype=FDTYPE)
+
+        return hess, grad, out, data
 
 ###########################
 ###########################
