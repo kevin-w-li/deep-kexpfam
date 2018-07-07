@@ -34,7 +34,7 @@ class TrainedDeepLite(object):
         
 
         if config is None:
-            config = tf.ConfigProto(device_count={"GPU":1})
+            config = tf.ConfigProto(device_count={"GPU":0})
             config.gpu_options.allow_growth=True
 
         tf.reset_default_graph() 
