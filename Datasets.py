@@ -281,7 +281,10 @@ class Ring(ToyDataset):
         
         self.sigma = sigma
         self.D = D
-        self.radia = np.array([1, 3, 5])[-nring::]
+        if nring == 1:
+            self.radia = np.array([5])
+        else:
+            self.radia = np.array([1, 3, 5])
         self.name  = "ring"
         self.has_grad = True
         
