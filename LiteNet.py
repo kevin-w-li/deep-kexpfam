@@ -16,7 +16,8 @@ def construct_index(dim,s="o", n=1):
 
 FDTYPE="float32"
 
-c = 10000
+c = 30
+'''
 nl   = lambda x: tf.log(1+tf.exp(x))
 dnl  = lambda x: 1/(1+tf.exp(-x))
 d2nl = lambda x: tf.exp(-x)/tf.square(1+tf.exp(-x))
@@ -25,6 +26,7 @@ d2nl = lambda x: tf.exp(-x)/tf.square(1+tf.exp(-x))
 nl   = lambda x: tf.where(x<c, tf.log(1+tf.exp(x)), x)
 dnl  = lambda x: tf.where(x<-c, tf.zeros_like(x), 1/(1+tf.exp(-x)))
 d2nl = lambda x: tf.where(tf.logical_and(-c<x, x<c), tf.exp(-x)/tf.square(1+tf.exp(-x)), tf.zeros_like(x))
+'''
 
 nl   = lambda x: tf.where(x<0, tf.exp(0.5*x)-1, tf.where(x<c, tf.log(1+tf.exp(x)), x)-np.log(2))
 dnl  = lambda x: tf.where(x<0, 0.50*tf.exp(0.5*x), 1/(1+tf.exp(-x)))
@@ -62,9 +64,9 @@ class LiteModel:
             self.noise_std   = tf.constant(0.0, dtype=FDTYPE, name="noise_std")
         else:
             with tf.name_scope("regularizers"):
-                self.lam_norm    = pow_10(init_log_lam, "lam_norm", trainable=True)
+                self.lam_norm    = pow_10(-100, "lam_norm", trainable=False)
                 self.lam_alpha   = pow_10(init_log_lam, "lam_alpha", trainable=True)
-                self.lam_curve   = pow_10(init_log_lam, "lam_curve", trainable=True)
+                self.lam_curve   = pow_10(-100, "lam_curve", trainable=False)
                 self.lam_weights = pow_10(log_lam_weights, "lam_weights", trainable=False)
                 self.lam_kde     = pow_10(0, "lam_kde", trainable=False)
                 self.noise_std   = noise_std

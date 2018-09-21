@@ -26,19 +26,18 @@ data_name = None
 
 # parameters for training
 minibatch = 200
-patience = 30
+patience = 50
 monitor_every = 1
 weight_decay_rate = 1.0e-6
 a_made = 1.0e-3
 a_flow = 1.0e-4
 
 
-def load_data(name, D = None, noise_std=0.0, seed=1, **kwargs):
+def load_data(name, data_array=None, D = None, noise_std=0.0, seed=1, **kwargs):
     """
     Loads the dataset. Has to be called before anything else.
     :param name: string, the dataset's name
     """
-
     assert isinstance(name, str), 'Name must be a string'
     datasets.root = root_data
     global data, data_name
@@ -64,11 +63,11 @@ def load_data(name, D = None, noise_std=0.0, seed=1, **kwargs):
         data_name = name
 
     elif name == 'hepmass':
-        data = datasets.HEPMASS()
+        data = datasets.HEPMASS(noise_std=noise_std, seed=seed, **kwargs)
         data_name = name
 
     elif name == 'miniboone':
-        data = datasets.MINIBOONE()
+        data = datasets.MINIBOONE(noise_std=noise_std, seed=seed, **kwargs)
         data_name = name
 
     elif name == 'redwine':
@@ -81,6 +80,10 @@ def load_data(name, D = None, noise_std=0.0, seed=1, **kwargs):
 
     elif name == 'parkinson':
         data = datasets.PARKINSON(noise_std=noise_std, seed=seed, **kwargs)
+        data_name = name
+
+    elif name == "array":
+        data = datasets.ARRAY(data_array, name, noise_std=noise_std, seed=seed, **kwargs)
         data_name = name
     elif name in ['funnel', 'ring', 'spiral', 'banana', 'cosine', 'grid']:
         assert D is not None

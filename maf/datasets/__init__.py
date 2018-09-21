@@ -6,3 +6,4 @@ from redwine import REDWINE
 from whitewine import WHITEWINE
 from parkinson import PARKINSON
 from toy import TOY
+from array import ARRAY

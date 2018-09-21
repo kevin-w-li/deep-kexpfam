@@ -214,21 +214,30 @@ class DeepLite(object):
                          valid_kde=self.valid_kde)
 
         optimizer = tf.train.AdamOptimizer(self.train_params["step_size"])
-        raw_gradients, variables = zip(*optimizer.compute_gradients(loss))
-        gradients = [ tf.where(tf.is_nan(g), tf.zeros_like(g), g) for g in raw_gradients if g is not None]
 
-        accum_gradients = [tf.Variable(tf.zeros_like(g), trainable=False) for g in gradients]
-        self.ops["zero_op"]  = [ag.assign(tf.zeros_like(ag)) for ag in accum_gradients]
+        if len(tf.trainable_variables()) != 0:
+            raw_gradients, variables = zip(*optimizer.compute_gradients(loss))
+            gradients = [ tf.where(tf.is_nan(g), tf.zeros_like(g), g) for g in raw_gradients if g is not None]
 
-        nbatch = tf.placeholder(FDTYPE, shape=[], name="nbatch")
-        self.train_params["nbatch"] = nbatch
+            accum_gradients = [tf.Variable(tf.zeros_like(g), trainable=False) for g in gradients]
+            self.ops["zero_op"]  = [ag.assign(tf.zeros_like(ag)) for ag in accum_gradients]
 
-        self.ops["accum_op"] = [accum_gradients[i].assign_add(g/nbatch) for i, g in enumerate(gradients)]
-        self.ops["train_step"] = optimizer.apply_gradients( zip(gradients, variables) )
+            nbatch = tf.placeholder(FDTYPE, shape=[], name="nbatch")
+            self.train_params["nbatch"] = nbatch
+
+            self.ops["accum_op"] = [accum_gradients[i].assign_add(g/nbatch) for i, g in enumerate(gradients)]
+            self.ops["train_step"] = optimizer.apply_gradients( zip(gradients, variables) )
+        else:
+            self.ops["accum_op"] = tf.no_op()
+            self.ops["train_step"] = tf.no_op()
+            self.ops["zero_op"]  = tf.no_op()
+            self.train_params["nbatch"] = 0
         
         lambdas = [v for v in tf.trainable_variables() if "regularizers" in v.name]
         if len(lambdas)>0:
             self.ops["train_lambdas"] = optimizer.minimize(loss, var_list = lambdas)
+        else:
+            self.ops["train_lambdas"] = tf.no_op()
 
         self.alpha   = tf.Variable(tf.zeros(npoint), dtype=FDTYPE, name="alpha_eval", trainable=False)
 
@@ -279,7 +288,8 @@ class DeepLite(object):
         for k in self.states:
             if k not in self.state_hist:
                 self.state_hist[k] = []
-        self.state_hist["test_score"] = []
+        if "test_score" not in self.state_hist:
+            self.state_hist["test_score"] = []
         
     def step(self, feed, ntest):
         
@@ -375,24 +385,26 @@ class DeepLite(object):
                 epoch = int((nbatch * nvalid + ntrain) * (i+1) * 1.0 / target.N)
                 
                 current_score = self.state_hist["test_score"][-1]
-
+                
                 if current_score < best_score:
                     best_score = min(best_score, current_score)
-                    wait_window = 0
-                    self.save()
-                    found_best = True
+                    if patience>0:
+                        wait_window = 0
+                        self.save()
+                        found_best = True
                 else:
                     found_best = False
 
                 if epoch > last_epoch:
                     last_epoch = epoch
-                    if found_best:
-                        wait_window = 0
-                    else:
-                        wait_window += 1
-                    
-                    if wait_window == patience:
-                        break
+                    if patience>0:
+                        if found_best:
+                            wait_window = 0
+                        else:
+                            wait_window += 1
+                        
+                        if wait_window == patience:
+                            break
 
 
 
@@ -423,7 +435,10 @@ class DeepLite(object):
                             state_str += "\n"
                     tqdm.write(state_str)
         
-        self.load()
+        if patience>0:
+            self.load()
+        else:
+            self.save()
         print "best score: %.5f" % best_score
         '''
         data = self.final_train_data(min(self.target.N, 5000))
