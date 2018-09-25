@@ -26,7 +26,7 @@ data_name = None
 
 # parameters for training
 minibatch = 200
-patience = 50
+patience = 30
 monitor_every = 1
 weight_decay_rate = 1.0e-6
 a_made = 1.0e-3
@@ -85,7 +85,7 @@ def load_data(name, data_array=None, D = None, noise_std=0.0, seed=1, **kwargs):
     elif name == "array":
         data = datasets.ARRAY(data_array, name, noise_std=noise_std, seed=seed, **kwargs)
         data_name = name
-    elif name in ['funnel', 'ring', 'spiral', 'banana', 'cosine', 'grid']:
+    elif name in ['funnel', 'ring', 'spiral', 'banana', 'cosine', 'grid', 'uniform']:
         assert D is not None
         data_name = name
         name = name.title()

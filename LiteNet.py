@@ -26,8 +26,8 @@ d2nl = lambda x: tf.exp(-x)/tf.square(1+tf.exp(-x))
 nl   = lambda x: tf.where(x<c, tf.log(1+tf.exp(x)), x)
 dnl  = lambda x: tf.where(x<-c, tf.zeros_like(x), 1/(1+tf.exp(-x)))
 d2nl = lambda x: tf.where(tf.logical_and(-c<x, x<c), tf.exp(-x)/tf.square(1+tf.exp(-x)), tf.zeros_like(x))
-'''
 
+'''
 nl   = lambda x: tf.where(x<0, tf.exp(0.5*x)-1, tf.where(x<c, tf.log(1+tf.exp(x)), x)-np.log(2))
 dnl  = lambda x: tf.where(x<0, 0.50*tf.exp(0.5*x), 1/(1+tf.exp(-x)))
 d2nl = lambda x: tf.where(x<0, 0.25*tf.exp(0.5*x), 
@@ -52,8 +52,12 @@ class LiteModel:
                 simple_lite=False, lam = None, base=False):
         
         self.kernel = kernel
-        self.alpha  = alpha
         self.base   = base
+
+        if alpha is None:
+            self.alpha = tf.zeros([1], dtype=FDTYPE)
+        else:
+            self.alpha = alpha
         
         if simple_lite:
             assert lam is not None
@@ -64,11 +68,11 @@ class LiteModel:
             self.noise_std   = tf.constant(0.0, dtype=FDTYPE, name="noise_std")
         else:
             with tf.name_scope("regularizers"):
-                self.lam_norm    = pow_10(-100, "lam_norm", trainable=False)
+                self.lam_norm    = pow_10(-1000, "lam_norm", trainable=False)
                 self.lam_alpha   = pow_10(init_log_lam, "lam_alpha", trainable=True)
-                self.lam_curve   = pow_10(-100, "lam_curve", trainable=False)
+                self.lam_curve   = pow_10(-1000, "lam_curve", trainable=False)
                 self.lam_weights = pow_10(log_lam_weights, "lam_weights", trainable=False)
-                self.lam_kde     = pow_10(0, "lam_kde", trainable=False)
+                self.lam_kde     = pow_10(-1000, "lam_kde", trainable=False)
                 self.noise_std   = noise_std
 
         if points is not None:
@@ -76,10 +80,6 @@ class LiteModel:
 
         if base:
             self.base = GaussianBase(self.ndim_in[0], 2)
-        if alpha is None:
-            self.alpha = tf.zeros([1], dtype=FDTYPE)
-
-
     def _score_statistics(self, data=None, add_noise=False, take_mean=True):
         
         ''' compute the vector b and matrix C
@@ -155,7 +155,7 @@ class LiteModel:
         s1 = 0.5 * (tf.einsum('i,ijk,j->k', alpha, G2, alpha) + qG2) + tf.einsum("i,ij->j", alpha , GqG)
         score  =  s1 + s2
 
-        return score
+        return score, H, G2, H2, GqG, qG2, qH, HqH, qH2, data
 
     def score(self, data=None, alpha=None, add_noise=False):
 
@@ -186,7 +186,7 @@ class LiteModel:
         # score     = (alpha * H + qH) + [ (0.5 * alpha * G2 * alpha) + (alpha * G * qG) + (0.5*qG2) ]
         # curvature = (0.5 * alpha * H2 * alpha) + (alpha * H * qH)  + (0.5 * qH2)
 
-        H, G2, H2, GqG, qG2, qH, HqH, qH2, data = self._score_statistics(data=data)
+        H, G2, H2, GqG, qG2, qH, HqH, qH2, data = self._score_statistics(data=data, add_noise=True)
 
         quad =  (G2 + 
                 self.K*self.lam_norm+
@@ -209,7 +209,8 @@ class LiteModel:
             lin   = lin  + self.lam_kde * tf.einsum("mij,ij->m", delta, kde_delta) / npair
         
         alpha = tf.matrix_solve(quad, lin[:,None])[:,0]
-        return alpha,H, G2, H2, GqG, qG2, qH, HqH, qH2, data 
+        alpha_step = lambda a: (tf.matmul(quad, a[:,None]) - lin[:,None])[:,0]
+        return alpha,H, G2, H2, GqG, qG2, qH, HqH, qH2, data, alpha_step
 
 
     def opt_score(self, data=None, alpha=None, kde=None):
@@ -219,7 +220,7 @@ class LiteModel:
         if alpha is None:
             alpha = self.alpha
         
-        alpha_opt, H, G2, H2, GqG, qG2, qH, HqH, qH2, data  = self.opt_alpha(data, kde)
+        alpha_opt, H, G2, H2, GqG, qG2, qH, HqH, qH2, data,_  = self.opt_alpha(data, kde)
         alpha_assign_op = tf.assign(alpha, alpha_opt)
 
         s2     =  tf.einsum('i,i->', alpha, H) + qH
@@ -239,14 +240,24 @@ class LiteModel:
 
         return alpha_assign_op, score, data
         
-    def val_score(self, train_data=None, valid_data=None, test_data=None, train_kde=None, valid_kde=None):
+    def val_score(self, train_data=None, valid_data=None, test_data=None, train_kde=None, valid_kde=None, clip_score=False):
         
 
-        self.alpha, H, G2, H2, GqG, qG2, qH, HqH, qH2, train_data = self.opt_alpha(train_data, train_kde)
+        self.alpha, H, G2, H2, GqG, qG2, qH, HqH, qH2, train_data, _ = self.opt_alpha(train_data, train_kde)
 
         #  ====== validation ======
-        score, H, G2, H2, GqG, qG2, qH, HqH, qH2, valid_data = self.score(data=valid_data, alpha=self.alpha, 
-                                                add_noise=True)
+        score, H, G2, H2, GqG, qG2, qH, HqH, qH2, valid_data = self.individual_score(
+                                            data=valid_data, alpha=self.alpha, add_noise=True)
+        
+        score_mean = tf.reduce_mean(score)
+        score_std  = tf.sqrt(tf.reduce_mean(score**2) - score_mean**2)
+        count = tf.reduce_sum(tf.cast(tf.logical_or(score < score_mean-3*score_std, 
+                                            score > score_mean+100*score_std), "int32"))
+
+        if clip_score:
+            score = tf.clip_by_value(score, score_mean-3*score_std,np.inf)
+
+        score = tf.reduce_mean(score)
 
         if test_data is not None: 
             test_score = self.score(data=test_data, alpha=self.alpha, 
@@ -256,13 +267,9 @@ class LiteModel:
 
         r_norm =  self.get_fun_rkhs_norm()
         l_norm =  self.get_fun_l2_norm()
-        curve  =  0.5 * (tf.einsum('i,ij,j', self.alpha, H2, self.alpha) + qH2) + tf.einsum("i,i->", self.alpha, HqH)
+        curve  =  0.5 * (tf.einsum('i,ij,j', self.alpha, tf.reduce_mean(H2,2), self.alpha) + tf.reduce_mean(qH2)) + tf.einsum("i,i->", self.alpha, tf.reduce_mean(HqH,1))
         w_norm =  self.get_weights_norm()
-        loss   =  score + 0.5 * (  w_norm * self.lam_weights
-                                   #r_norm * tf.stop_gradient(self.lam_norm)+
-                                   #l_norm * tf.stop_gradient(self.lam_alpha)+
-                                   #curve  * tf.stop_gradient(self.lam_curve)
-                                   )
+        loss   =  score + 0.5 * (  w_norm * self.lam_weights )
         if valid_kde is not None:
             k_loss =  self.kde_loss(valid_data, valid_kde)
             loss = loss + 0.5 * self.lam_kde * k_loss
@@ -270,27 +277,51 @@ class LiteModel:
             k_loss = tf.zeros([], dtype=FDTYPE)
 
 
-        return loss, score, train_data, valid_data, r_norm, l_norm, curve, w_norm, k_loss, test_score
+        return loss, score, train_data, valid_data, r_norm, l_norm, curve, w_norm, k_loss, test_score, count
         
-    def step_score(self, train_data=None, test_data=None):
+    def step_score(self, train_data=None, valid_data=None, test_data=None, lr = 0.001, 
+                        train_kde=None, valid_kde=None):
         
-        score, H, G, C, qH, qG, qC, valid_data = self.score(data=train_data, alpha=self.alpha, 
-                                                add_noise=True)
+        _, H, G2, H2, GqG, qG2, qH, HqH, qH2, train_data, step = self.opt_alpha(train_data, train_kde)
+        with tf.variable_scope("alpha_step", reuse=tf.AUTO_REUSE) as scope:
+            delta = tf.get_variable("alpha_momentum", (self.npoint,), 
+                    dtype=FDTYPE, trainable=False, initializer=tf.zeros_initializer)
+
+        delta = 0.9 * delta - step(self.alpha) * lr
+        self.alpha = self.alpha + delta
+
+        #  ====== validation ======
+        score, H, G2, H2, GqG, qG2, qH, HqH, qH2, valid_data = self.individual_score(
+                                            data=valid_data, alpha=self.alpha, add_noise=True)
+        
+        score_mean = tf.reduce_mean(score)
+        score_std  = tf.sqrt(tf.reduce_mean(score**2) - score_mean**2)
+        count = tf.reduce_sum(tf.cast(tf.logical_or(score < score_mean-2*score_std, 
+                                            score > score_mean+100*score_std), "int32"))
+        
+        score = tf.clip_by_value(score, score_mean-2*score_std,score_mean+100*score_std)
+        score = tf.reduce_mean(score)
 
         if test_data is not None: 
             test_score = self.score(data=test_data, alpha=self.alpha, 
-                                                    add_noise=False)[0]
+                                                    add_noise=True)[0]
         else:
             test_score = tf.constant(0.0, dtype=FDTYPE)
 
         r_norm =  self.get_fun_rkhs_norm()
         l_norm =  self.get_fun_l2_norm()
-        curve = tf.einsum('i,ij,j', self.alpha, C, self.alpha) + qC
+        curve  =  0.5 * (tf.einsum('i,ij,j', self.alpha, tf.reduce_mean(H2,2), self.alpha) + tf.reduce_mean(qH2)) + tf.einsum("i,i->", self.alpha, tf.reduce_mean(HqH,1))
         w_norm =  self.get_weights_norm()
-        loss   =  score + 0.5 * (curve * self.lam_curve + 
-                                 w_norm * self.lam_weights)
+        loss   =  score + 0.5 * (  w_norm * self.lam_weights)
+        if valid_kde is not None:
+            k_loss =  self.kde_loss(valid_data, valid_kde)
+            loss = loss + 0.5 * self.lam_kde * k_loss
+        else:   
+            k_loss = tf.zeros([], dtype=FDTYPE)
 
-        return loss, score, train_data, valid_data, r_norm, l_norm, curve, w_norm, test_score
+
+        return loss, score, train_data, valid_data, r_norm, l_norm, curve, w_norm, k_loss, test_score, count
+        
     
     def set_points(self, points):
         
@@ -1061,8 +1092,8 @@ class PolynomialKernel(Kernel):
     def __init__(self, d, c=1.0):
         
         self.d = d
-        with tf.name_scope("GaussianKernel"):
-            self.c = tf.Variable(c, name="c", dtype=FDTYPE)
+        with tf.name_scope("PolynomialKernel"):
+            self.c = tf.Variable(c, name="c", dtype=FDTYPE, trainable=False)
 
     def get_inner(self, X, Y):
         if X.shape.ndims==1:
@@ -1104,7 +1135,7 @@ class PolynomialKernel(Kernel):
         K1 = self.d * (inner+self.c)**(self.d-1) * X[:,None,:] 
 
         if self.d == 1:
-            K2 = tf.zeros((X.shape[0], Y.shape[0], Y.shape[1]))
+            K2 = tf.zeros((tf.shape(X)[0], tf.shape(Y)[0], tf.shape(Y)[1]), dtype=FDTYPE)
         else:
             K2 = self.d*(self.d-1)*(inner+self.c)**(self.d-2) * (X[:,None,:]**2)
 
@@ -1116,7 +1147,7 @@ class PolynomialKernel(Kernel):
         K1 = self.d * (inner+self.c)**(self.d-1) * X[:,None,:] 
 
         if self.d == 1:
-            K2 = tf.zeros((X.shape[0], Y.shape[0], Y.shape[1], Y.shape[1]))
+            K2 = tf.zeros((tf.shape(X)[0], tf.shape(Y)[0], tf.shape(Y)[1], tf.shape(Y)[1]), dtype=FDTYPE)
         else:
             inner = inner[:,:,:,None]
             K2 = self.d*(self.d-1)*(inner+self.c)**(self.d-2) * (X[:,None,None,:] * X[:,None,:,None])
@@ -1132,7 +1163,7 @@ class PolynomialKernel(Kernel):
         K1 = self.d * (inner+self.c)**(self.d-1) * X[:,None,:] 
 
         if self.d == 1:
-            K2 = tf.zeros((X.shape[0], Y.shape[0], Y.shape[1], Y.shape[1]))
+            K2 = tf.zeros((tf.shape(X)[0], tf.shape(Y)[0], tf.shape(Y)[1], tf.shape(Y)[1]), dtype=FDTYPE)
         else:
             inner = inner[:,:,:,None]
             K2 = self.d*(self.d-1)*(inner+self.c)**(self.d-2) * (X[:,None,None,:] * X[:,None,:,None])
