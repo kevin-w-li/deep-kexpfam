@@ -110,7 +110,7 @@ class ToyDataset(Dataset):
 
 class Spiral(ToyDataset):
     
-    def __init__(self, sigma=0.5, D = 2, eps=1, r_scale=1.5, starts=np.array([0.0,2.0/3,4.0/3]) * np.pi, 
+    def __init__(self, sigma=0.2, D = 2, eps=1.5, r_scale=1.5, starts=np.array([0.0,2.0/3,4.0/3]) * np.pi, 
                 length=np.pi):
 
         self.sigma = sigma
@@ -275,7 +275,7 @@ class Funnel(ToyDataset):
 class Ring(ToyDataset):
 
 
-    def __init__(self, sigma=0.5, D=2, nring = 3):
+    def __init__(self, sigma=0.2, D=2, nring = 1):
 
         assert D >= 2
         
@@ -372,7 +372,25 @@ class Cosine(ToyDataset):
         x[:,1] += x1
         return x
 
-    
+class Uniform(ToyDataset):
+
+    def __init__(self, D=2,lims = 3):
+        self.lims = lims
+        self.D = D
+        self.has_grad = True
+
+    def sample(self,n):
+        return 2*(np.random.rand(n, self.D) - 0.5) * self.lims
+
+    def logpdf_multiple(self, x):
+        pdf = - np.ones(x.shape[0]) * np.inf
+        inbounds = np.all( (x<self.lims) * ( x > -self.lims), -1)
+        pdf[inbounds] = -np.log((2*self.lims)**self.D)
+        return pdf
+        
+    def grad_multiple(self, x):
+        
+        return np.zeros_like(x)
 
 class Banana(ToyDataset):
     
@@ -721,7 +739,7 @@ def load_data(dname, noise_std=0.0, seed=1, D=None, data_args={}, **kwargs):
         p = Power(noise_std=noise_std, ntest=1000, seed=seed, **kwargs)
     elif dname[0] == 'h':
         p = HepMass(noise_std=noise_std, ntest=1000, seed=seed, **kwargs)
-    elif dname[0] in ['f','r', 's', 'b', 'c', 'g']:
+    elif dname[0] in ['f','r', 's', 'b', 'c', 'g', 'u']:
         assert D is not None
         p = RealToy(dname.title(), D=D, noise_std=0.0, ntest=1000, seed=seed, data_args=data_args, **kwargs)
     return p
