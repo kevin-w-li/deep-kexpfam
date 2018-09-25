@@ -394,7 +394,7 @@ class Uniform(ToyDataset):
 
 class Banana(ToyDataset):
     
-    def __init__(self, bananicity = 0.03, sigma=10, D=2):
+    def __init__(self, bananicity = 1.0, sigma=1, D=2):
         self.bananicity = bananicity
         self.sigma = sigma
         self.D = D
