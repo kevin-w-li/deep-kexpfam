@@ -15,17 +15,19 @@ from autograd import elementwise_grad
 from sklearn.neighbors import KernelDensity
 from sklearn.model_selection import GridSearchCV
 
+from sklearn.cluster import KMeans, AgglomerativeClustering
+
 def apply_whiten(data):
     
     mean = data.mean(0)
     data = data - data.mean(0)
     u, s, vt = np.linalg.svd(data[:10**4])
-    M = vt.T/s * np.sqrt(data.shape[0])
-    data = np.dot(data, M)
-    return data, M, mean
+    W = vt.T/s * np.sqrt(data.shape[0])
+    data = np.dot(data, W)
+    return data, W, mean
 
-def inv_whiten(data, M, mean):
-    return data.dot(np.linalg.inv(M)) + mean
+def inv_whiten(data, W, mean):
+    return data.dot(np.linalg.inv(W)) + mean
 
 def apply_scale(data):
     
@@ -110,7 +112,7 @@ class ToyDataset(Dataset):
 
 class Spiral(ToyDataset):
     
-    def __init__(self, sigma=0.2, D = 2, eps=1.5, r_scale=1.5, starts=np.array([0.0,2.0/3,4.0/3]) * np.pi, 
+    def __init__(self, sigma=0.5, D = 2, eps=1, r_scale=1.5, starts=np.array([0.0,2.0/3,4.0/3]) * np.pi, 
                 length=np.pi):
 
         self.sigma = sigma
@@ -275,16 +277,13 @@ class Funnel(ToyDataset):
 class Ring(ToyDataset):
 
 
-    def __init__(self, sigma=0.2, D=2, nring = 1):
+    def __init__(self, sigma=0.5, D=2, nring = 3):
 
         assert D >= 2
         
         self.sigma = sigma
         self.D = D
-        if nring == 1:
-            self.radia = np.array([5])
-        else:
-            self.radia = np.array([1, 3, 5])
+        self.radia = np.array([1, 3, 5])[:nring]
         self.name  = "ring"
         self.has_grad = True
         
@@ -372,29 +371,11 @@ class Cosine(ToyDataset):
         x[:,1] += x1
         return x
 
-class Uniform(ToyDataset):
-
-    def __init__(self, D=2,lims = 3):
-        self.lims = lims
-        self.D = D
-        self.has_grad = True
-
-    def sample(self,n):
-        return 2*(np.random.rand(n, self.D) - 0.5) * self.lims
-
-    def logpdf_multiple(self, x):
-        pdf = - np.ones(x.shape[0]) * np.inf
-        inbounds = np.all( (x<self.lims) * ( x > -self.lims), -1)
-        pdf[inbounds] = -np.log((2*self.lims)**self.D)
-        return pdf
-        
-    def grad_multiple(self, x):
-        
-        return np.zeros_like(x)
+    
 
 class Banana(ToyDataset):
     
-    def __init__(self, bananicity = 1.0, sigma=1, D=2):
+    def __init__(self, bananicity = 0.03, sigma=10, D=2):
         self.bananicity = bananicity
         self.sigma = sigma
         self.D = D
@@ -450,8 +431,8 @@ def clean_data(data, cor=0.98):
 class RealDataset(Dataset):
 
     def __init__(self, idx=None, N=None, valid_thresh=0.0, noise_std = 0.0, 
-                ntest=0, seed=0, itanh=False, whiten=True, nkde=0):
-
+                ntest=0, seed=0, permute=True, itanh=False, whiten=True, dequantise=False, nkde=0):
+        
         np.random.seed(seed) 
         np.random.shuffle(self.data)
 
@@ -459,11 +440,12 @@ class RealDataset(Dataset):
             self.data = self.data[:,idx]
         if N is not None:
             self.data = self.data[:N]
-       
-        for d in range(self.data.shape[1]):
-            diff = np.median(np.diff(np.unique(self.data[:,d])))
-            n = self.data.shape[0] 
-            self.data[:,d] += (np.random.rand(n)*2-1) * diff
+        
+        if dequantise:
+            for d in range(self.data.shape[1]):
+                diff = np.median(np.diff(np.unique(self.data[:,d])))
+                n = self.data.shape[0] 
+                self.data[:,d] += (np.random.rand(n)*2-1) * diff * 1
       
 
         self.nround   = 0
@@ -474,12 +456,18 @@ class RealDataset(Dataset):
 
         self.idx = idx
         self.noise_std = noise_std
-         
-        idx = np.random.permutation(self.data.shape[1])
-        self.data = self.data[:,idx]
+        
+        if permute:
+            idx = np.random.permutation(self.data.shape[1])
+            self.data = self.data[:,idx]
+        else:
+            idx = np.arange(self.data.shape[1])
 
         if whiten:
             self.data, self.W, self.mean = apply_whiten(self.data)
+        else:
+            self.W = np.eye(self.data.shape[1])
+            self.mean = np.zeros(self.data.shape[1])
         
         self.data += np.random.randn(*self.data.shape) * noise_std
 
@@ -488,14 +476,12 @@ class RealDataset(Dataset):
 
         self.ntest = ntest
 
-        if ntest > 0:
-
-            self.all_data  = self.data.copy()
-            self.test_data = self.all_data[-ntest:]
-            self.data = self.all_data[:-ntest]
-            nvalid = int(self.data.shape[0]*0.1)
-            self.valid_data = self.data[-nvalid:]
-            self.data = self.data[:-nvalid]
+        self.all_data  = self.data.copy()
+        self.test_data = self.all_data[-ntest:]
+        self.data = self.all_data[:-ntest]
+        nvalid = int(self.data.shape[0]*0.1)
+        self.valid_data = self.data[-nvalid:]
+        self.data = self.data[:-nvalid]
 
         self.N, self.D = self.data.shape
 
@@ -616,6 +602,27 @@ class RealDataset(Dataset):
             if self.nkde:
                 self.kde_logp = self.kde_logp[idx]
 
+    def itrans(self, data):
+        
+        if self.itanh:
+            data = inv_itanh(data, self.ptp, self.min, self.mean2)
+
+        if self.whiten:
+            data = inv_whiten(data, self.W, self.mean)
+            
+        data = data[:, np.argsort(self.idx)]
+
+        return data
+        
+    def trans(self, data):
+        # assuming only whitening 
+
+        data = data[:, self.idx]
+        if self.whiten:
+            data = (data - self.mean).dot(self.W)
+
+        return data
+
 class WhiteWine(RealDataset):
     
     def __init__(self, *args, **kwargs):
@@ -637,10 +644,18 @@ class HepMass(RealDataset):
     def __init__(self, *args, **kwargs):
         self.data = np.load("data/hepmass.npz")["data"]
         self.data = self.data[self.data[:,0]==1,:]
-        self.data = np.delete(self.data, [0,6,10,14,18,22])
+        self.data = np.delete(self.data, [0,6,10,14,18,22], axis=1)
         self.name="HepMass"
 
         super(HepMass, self).__init__(*args, **kwargs)
+
+class MiniBoone(RealDataset):
+    
+    def __init__(self, *args, **kwargs):
+        self.data = np.load("data/miniboone.npy")
+        self.name="MiniBoone"
+
+        super(MiniBoone, self).__init__(*args, **kwargs)
 
 class Parkinsons(RealDataset):
     def __init__(self, cor=0.98, *args, **kwargs):
@@ -662,10 +677,28 @@ class Power(RealDataset):
     def __init__(self, cor=0.98, *args, **kwargs):
         self.data = np.load("data/power.npy")
         self.name="Owerp"
-        #self.data = clean_data(self.data, cor=cor)
         self.data = np.delete(self.data,[1,3], axis=1)
         
         super(Power, self).__init__(*args, **kwargs)
+
+class Mixture(RealDataset):
+    
+    def __init__(self, p, n_clusters, seed, *args, **kwargs):
+        
+        self.n_clusters=n_clusters
+        cluster = AgglomerativeClustering(n_clusters=n_clusters)
+        y = cluster.fit_predict(p.data)
+        self.ps = []
+        self.props = []
+        kwargs["permute"]=False
+        kwargs["ntest"]  =1
+        for i in range(n_clusters):
+            d = p.data[y==i]
+            p_i = ArrayDataset(d, p.name+"_%d"%i, *args, **kwargs)
+            prop = np.sum(y==i) * 1.0 / p.data.shape[0]
+            self.ps.append(p_i)
+            self.props.append(prop)
+             
 
 class ArrayDataset(RealDataset):
     
@@ -703,20 +736,6 @@ class RealToy(RealDataset):
 
         super(RealToy, self).__init__(*args, **kwargs)
 
-    def itrans(self, data):
-        
-        if self.itanh:
-            data = inv_itanh(data, self.ptp, self.min, self.mean2)
-
-        if self.whiten:
-            data = inv_whiten(data, self.W, self.mean)
-            
-        data = data[:, np.argsort(self.idx)]
-
-        data = np.dot(data, self.M)
-
-        return data
-        
     def logpdf_multiple(self, data):
         
         return self.dist.logpdf_multiple(self.itrans(data))
@@ -728,8 +747,10 @@ class RealToy(RealDataset):
 def load_data(dname, noise_std=0.0, seed=1, D=None, data_args={}, **kwargs):
     dname = dname.lower()
     if dname[0:2] == "re":
+        kwargs["dequantise"] = True
         p = RedWine(noise_std=noise_std, ntest=500, seed=seed, **kwargs)
     elif dname[0] == "w":
+        kwargs["dequantise"] = True
         p = WhiteWine(noise_std=noise_std, ntest=1000, seed=seed, **kwargs)
     elif dname[0] == 'p':
         p = Parkinsons(noise_std=noise_std, ntest=1000, seed=seed, **kwargs)
@@ -739,7 +760,9 @@ def load_data(dname, noise_std=0.0, seed=1, D=None, data_args={}, **kwargs):
         p = Power(noise_std=noise_std, ntest=1000, seed=seed, **kwargs)
     elif dname[0] == 'h':
         p = HepMass(noise_std=noise_std, ntest=1000, seed=seed, **kwargs)
-    elif dname[0] in ['f','r', 's', 'b', 'c', 'g', 'u']:
+    elif dname[0] == 'm':
+        p = MiniBoone(noise_std=noise_std, ntest=1000, seed=seed, **kwargs)
+    elif dname[0] in ['f','r', 's', 'b', 'c', 'g']:
         assert D is not None
         p = RealToy(dname.title(), D=D, noise_std=0.0, ntest=1000, seed=seed, data_args=data_args, **kwargs)
     return p
