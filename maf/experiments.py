@@ -17,7 +17,7 @@ import pdfs
 
 
 # set paths
-root_output = 'output/'   # where to save trained models
+root_output = 'maf_models/'   # where to save trained models
 root_data = 'data/'       # where the datasets are
 
 # holders for the datasets
@@ -26,14 +26,14 @@ data_name = None
 
 # parameters for training
 minibatch = 200
-patience = 30
+patience = 50
 monitor_every = 1
 weight_decay_rate = 1.0e-6
 a_made = 1.0e-3
 a_flow = 1.0e-4
 
 
-def load_data(name, data_array=None, D = None, noise_std=0.0, seed=1, **kwargs):
+def load_data(name, data_array=None, data_array_name=None, D = None, noise_std=0.0, seed=1, **kwargs):
     """
     Loads the dataset. Has to be called before anything else.
     :param name: string, the dataset's name
@@ -78,14 +78,14 @@ def load_data(name, data_array=None, D = None, noise_std=0.0, seed=1, **kwargs):
         data = datasets.WHITEWINE(noise_std=noise_std, seed=seed, **kwargs)
         data_name = name
 
-    elif name == 'parkinson':
-        data = datasets.PARKINSON(noise_std=noise_std, seed=seed, **kwargs)
+    elif name == 'parkinsons':
+        data = datasets.PARKINSONS(noise_std=noise_std, seed=seed, **kwargs)
         data_name = name
 
     elif name == "array":
-        data = datasets.ARRAY(data_array, name, noise_std=noise_std, seed=seed, **kwargs)
-        data_name = name
-    elif name in ['funnel', 'ring', 'spiral', 'banana', 'cosine', 'grid', 'uniform']:
+        data = datasets.ARRAY(data_array, data_array_name, noise_std=noise_std, seed=seed, **kwargs)
+        data_name = data_array_name
+    elif name in ['funnel', 'ring', 'spiral', 'banana', 'cosine', 'grid']:
         assert D is not None
         data_name = name
         name = name.title()
@@ -105,7 +105,7 @@ def is_data_loaded():
     return data_name is not None
 
 
-def create_model_id(model_name, mode, n_hiddens, act_fun, n_comps, batch_norm):
+def create_model_id(model_name, mode, n_hiddens, act_fun, n_comps, seed=None):
     """
     Creates an identifier for the provided model description.
     """
@@ -123,9 +123,6 @@ def create_model_id(model_name, mode, n_hiddens, act_fun, n_comps, batch_norm):
         else:
             raise ValueError('invalid mode')
 
-    if batch_norm:
-        id += 'bn' + delim
-
     for h in n_hiddens:
         id += str(h) + delim
 
@@ -134,26 +131,29 @@ def create_model_id(model_name, mode, n_hiddens, act_fun, n_comps, batch_norm):
 
     id += act_fun
 
+    if seed is not None:
+        id += delim + "s%02d" % seed
+
     return id
 
 
-def save_model(model, model_name, mode, n_hiddens, act_fun, n_comps, batch_norm):
+def save_model(model, model_name, mode, n_hiddens, act_fun, n_comps, seed=None):
 
     assert is_data_loaded(), 'Dataset hasn\'t been loaded'
 
     savedir = root_output + data_name + '/'
     util.make_folder(savedir)
-    filename = create_model_id(model_name, mode, n_hiddens, act_fun, n_comps, batch_norm)
+    filename = create_model_id(model_name, mode, n_hiddens, act_fun, n_comps, seed=seed)
 
     util.save(model, savedir + filename + '.pkl')
 
 
-def load_model(model_name, mode, n_hiddens, act_fun, n_comps=None, batch_norm=False):
+def load_model(model_name, mode, n_hiddens, act_fun, n_comps=None, seed=None):
 
     assert is_data_loaded(), 'Dataset hasn\'t been loaded'
 
     savedir = root_output + data_name + '/'
-    filename = create_model_id(model_name, mode, n_hiddens, act_fun, n_comps, batch_norm)
+    filename = create_model_id(model_name, mode, n_hiddens, act_fun, n_comps, seed=seed)
 
     return util.load(savedir + filename + '.pkl')
 
@@ -205,12 +205,12 @@ def train_cond(model, a):
     )
 
 
-def train_made(n_hiddens, act_fun, mode, maxepochs=None):
+def train_made(n_hiddens, act_fun, mode, maxepochs=None, seed=None):
 
     assert is_data_loaded(), 'Dataset hasn\'t been loaded'
     model = mades.GaussianMade(data.n_dims, n_hiddens, act_fun, mode=mode)
     train(model, a_made, maxepochs=maxepochs)
-    save_model(model, 'made', mode, n_hiddens, act_fun, None, False)
+    save_model(model, 'made', mode, n_hiddens, act_fun, None, seed=seed)
     return model
 
 
@@ -219,15 +219,15 @@ def train_made_cond(n_hiddens, act_fun, mode):
     assert is_data_loaded(), 'Dataset hasn\'t been loaded'
     model = mades.ConditionalGaussianMade(data.n_labels, data.n_dims, n_hiddens, act_fun, mode=mode)
     train_cond(model, a_made)
-    save_model(model, 'made_cond', mode, n_hiddens, act_fun, None, False)
+    save_model(model, 'made_cond', mode, n_hiddens, act_fun, None)
 
 
-def train_mog_made(n_hiddens, act_fun, n_comps, mode, maxepochs=None):
+def train_mog_made(n_hiddens, act_fun, n_comps, mode, maxepochs=None, seed=None):
 
     assert is_data_loaded(), 'Dataset hasn\'t been loaded'
     model = mades.MixtureOfGaussiansMade(data.n_dims, n_hiddens, act_fun, n_comps, mode=mode)
     train(model, a_made, maxepochs = maxepochs)
-    save_model(model, 'made', mode, n_hiddens, act_fun, n_comps, False)
+    save_model(model, 'mog_made', mode, n_hiddens, act_fun, n_comps, seed=seed)
     return model
 
 
@@ -236,15 +236,15 @@ def train_mog_made_cond(n_hiddens, act_fun, n_comps, mode):
     assert is_data_loaded(), 'Dataset hasn\'t been loaded'
     model = mades.ConditionalMixtureOfGaussiansMade(data.n_labels, data.n_dims, n_hiddens, act_fun, n_comps, mode=mode)
     train_cond(model, a_made)
-    save_model(model, 'made_cond', mode, n_hiddens, act_fun, n_comps, False)
+    save_model(model, 'made_cond', mode, n_hiddens, act_fun, n_comps)
 
 
-def train_realnvp(n_hiddens, s_act, t_act, n_layers):
+def train_realnvp(n_hiddens, s_act, t_act, n_layers, seed=None):
 
     assert is_data_loaded(), 'Dataset hasn\'t been loaded'
     model = nvps.RealNVP(data.n_dims, n_hiddens, s_act, t_act, n_layers)
     train(model, a_flow)
-    save_model(model, 'realnvp', None, n_hiddens, s_act + t_act, n_layers, True)
+    save_model(model, 'realnvp', None, n_hiddens, s_act + t_act, n_layers, seed=seed)
     return model
 
 
@@ -253,15 +253,15 @@ def train_realnvp_cond(n_hiddens, s_act, t_act, n_layers):
     assert is_data_loaded(), 'Dataset hasn\'t been loaded'
     model = nvps.ConditionalRealNVP(data.n_labels, data.n_dims, n_hiddens, s_act, t_act, n_layers)
     train_cond(model, a_flow)
-    save_model(model, 'realnvp_cond', None, n_hiddens, s_act + t_act, n_layers, True)
+    save_model(model, 'realnvp_cond', None, n_hiddens, s_act + t_act, n_layers)
 
 
-def train_maf(n_hiddens, act_fun, n_mades, mode):
+def train_maf(n_hiddens, act_fun, n_mades, mode, seed=None):
 
     assert is_data_loaded(), 'Dataset hasn\'t been loaded'
     model = mafs.MaskedAutoregressiveFlow(data.n_dims, n_hiddens, act_fun, n_mades, mode=mode)
     train(model, a_flow)
-    save_model(model, 'maf', mode, n_hiddens, act_fun, n_mades, True)
+    save_model(model, 'maf', mode, n_hiddens, act_fun, n_mades, seed=seed)
     return model
 
 
@@ -270,15 +270,15 @@ def train_maf_cond(n_hiddens, act_fun, n_mades, mode):
     assert is_data_loaded(), 'Dataset hasn\'t been loaded'
     model = mafs.ConditionalMaskedAutoregressiveFlow(data.n_labels, data.n_dims, n_hiddens, act_fun, n_mades, mode=mode)
     train_cond(model, a_flow)
-    save_model(model, 'maf_cond', mode, n_hiddens, act_fun, n_mades, True)
+    save_model(model, 'maf_cond', mode, n_hiddens, act_fun, n_mades)
 
 
-def train_maf_on_made(n_hiddens, act_fun, n_layers, n_comps, mode):
+def train_maf_on_made(n_hiddens, act_fun, n_layers, n_comps, mode, seed=None):
 
     assert is_data_loaded(), 'Dataset hasn\'t been loaded'
     model = mafs.MaskedAutoregressiveFlow_on_MADE(data.n_dims, n_hiddens, act_fun, n_layers, n_comps, mode=mode)
     train(model, a_flow)
-    save_model(model, 'maf_on_made', mode, n_hiddens, act_fun, [n_layers, n_comps], True)
+    save_model(model, 'mog_maf', mode, n_hiddens, act_fun, [n_layers, n_comps], seed=seed)
     return model
 
 
@@ -287,7 +287,7 @@ def train_maf_on_made_cond(n_hiddens, act_fun, n_layers, n_comps, mode):
     assert is_data_loaded(), 'Dataset hasn\'t been loaded'
     model = mafs.ConditionalMaskedAutoregressiveFlow_on_MADE(data.n_labels, data.n_dims, n_hiddens, act_fun, n_layers, n_comps, mode=mode)
     train_cond(model, a_flow)
-    save_model(model, 'maf_on_made_cond', mode, n_hiddens, act_fun, [n_layers, n_comps], True)
+    save_model(model, 'maf_on_made_cond', mode, n_hiddens, act_fun, [n_layers, n_comps])
 
 
 def is_conditional(model):

@@ -6,7 +6,7 @@ from . import *
 import util
 from Datasets import HepMass
 
-class REDWINE:
+class HEPMASS:
 
     class Data:
 
@@ -17,7 +17,7 @@ class REDWINE:
 
     def __init__(self, noise_std=0.0, seed=1, **kwargs):
 
-        dist = HepMass(noise_std=noise_std, ntest=1000, seed=seed, **kwargs)
+        dist = HepMass(noise_std=noise_std ,seed=seed, ntest=1000, **kwargs)
         trn, val, tst, idx = dist.data, dist.valid_data, dist.test_data, dist.idx
 
         self.trn = self.Data(trn)

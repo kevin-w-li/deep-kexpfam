@@ -16,9 +16,9 @@ class TOY:
             self.x = data.astype(np.float32)
             self.N = self.x.shape[0]
 
-    def __init__(self, name, D, N=5000, noise_std=0.0, seed=1, data_args={}, rotate=False, itanh=True, whiten=True):
+    def __init__(self, name, D, N=5000, noise_std=0.0, seed=1, data_args={}, rotate=True, itanh=True, whiten=True):
 
-        dist = RealToy(name, D, N=N, seed=seed, noise_std=0.0, rotate=rotate, itanh=itanh, whiten=whiten, ntest=1000, data_args=data_args)
+        dist = RealToy(name, D, N=N, seed=seed, noise_std=0.0, itanh=itanh, whiten=whiten, ntest=1000, data_args=data_args)
         trn, val, tst, idx, dist = dist.data, dist.valid_data, dist.test_data, dist.idx, dist
 
         self.trn = self.Data(trn)

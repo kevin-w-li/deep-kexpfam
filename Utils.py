@@ -19,4 +19,3 @@ def get_grid(r, i, j, cond):
     grid_cond[:,j] = grid[:,1]
     return grid_cond
 
-

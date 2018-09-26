@@ -4,10 +4,9 @@ import matplotlib.pyplot as plt
 
 from . import *
 import util
-from Datasets import ArrayDataset
-from scipy.linalg import expm
+from Datasets import Parkinsons
 
-class ARRAY:
+class PARKINSONS:
 
     class Data:
 
@@ -16,15 +15,14 @@ class ARRAY:
             self.x = data.astype(np.float32)
             self.N = self.x.shape[0]
 
-    def __init__(self, data, name, seed=1, **kwargs):
+    def __init__(self, noise_std=0.0, seed=1, **kwargs):
 
-        dist = ArrayDataset(data, name, seed=seed, **kwargs)
-        trn, val, tst, idx, dist = dist.data, dist.valid_data, dist.test_data, dist.idx, dist
+        dist = Parkinsons(noise_std=noise_std, seed=seed, ntest=1000, **kwargs)
+        trn, val, tst, idx = dist.data, dist.valid_data, dist.test_data, dist.idx
 
         self.trn = self.Data(trn)
         self.val = self.Data(val)
         self.tst = self.Data(tst)
-        self.dist = dist
         self.seed= seed
         self.idx = idx
 
@@ -38,7 +36,3 @@ class ARRAY:
 
         util.plot_hist_marginals(data_split.x)
         plt.show()
-
-    def itrans(self, data):
-        
-        return self.dist.itrans(data)

@@ -17,7 +17,7 @@ class REDWINE:
 
     def __init__(self, noise_std=0.0, seed=1, **kwargs):
 
-        dist = RedWine(noise_std=noise_std, ntest=500, seed=seed, **kwargs)
+        dist = RedWine(noise_std=noise_std, ntest=500, dequantise=True, seed=seed, **kwargs)
         trn, val, tst, idx = dist.data, dist.valid_data, dist.test_data, dist.idx
 
         self.trn = self.Data(trn)
