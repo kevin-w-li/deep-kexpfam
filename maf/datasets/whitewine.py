@@ -16,7 +16,7 @@ class WHITEWINE:
 
     def __init__(self, noise_std=0.0, seed=1, **kwargs):
 
-        dist = WhiteWine(noise_std=noise_std, seed=seed, ntest=1000, **kwargs)
+        dist = WhiteWine(noise_std=noise_std, seed=seed, ntest=1000, dequantise=True, **kwargs)
         trn, val, tst, idx = dist.data, dist.valid_data, dist.test_data, dist.idx
 
         self.trn = self.Data(trn)

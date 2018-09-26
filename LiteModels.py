@@ -41,17 +41,59 @@ def optimistic_restore(session, save_file):
 
 class DeepLiteMixture(object):
     
-    def __init__(self, target, **kwargs):
-        
-        self.n_clusters = target.n_clusters
+    def __init__(self, targets, **kwargs):
+        self.targets = targets
+        self.n_clusters = targets.n_clusters
         self.lites = []
-        self.props = p.props
+        self.props = targets.props
 
         for i in range(self.n_clusters):
-            dl = DeepLite(targets.ps[i], **kwargs)
+            dl = DeepLite(targets.ps[i], fn_ext = "mc%d"%(i), **kwargs)
             self.lites.append(dl)
 
+    def fit(self, **kwargs):
+        for i in range(self.n_clusters):
+            self.lites[i].fit(**kwargs)
 
+    def set_test(self, *args):
+        for i in range(self.n_clusters):
+            self.lites[i].set_test(*args)
+
+    def set_train(self, *args):
+        for i in range(self.n_clusters):
+            self.lites[i].set_train(*args)
+        
+    def fit_alpha(self, n):
+        for i in range(self.n_clusters):
+            self.lites[i].fit_alpha(n)
+            
+    def estimate_normaliser(self, **kwargs):
+        for i in range(self.n_clusters):
+            self.lites[i].estimate_normaliser(**kwargs)
+
+    def estimate_data_lik(self, data, **kwargs):
+        ll = np.zeros((data.shape[0], self.n_clusters))
+        for i in range(self.n_clusters):
+            l = self.lites[i]
+            d = self.targets.ps[i].trans(data) 
+            if l.logZ is None:
+                l.estimate_normaliser(**kwargs)
+            ll[:,i] = l.estimate_data_lik(d, **kwargs) + np.linalg.slogdet(self.targets.ps[i].W)[1]
+        loglik = logsumexp(ll, 1, b=self.props)
+        return loglik
+
+    def save(self):
+        for i in range(self.n_clusters):
+            l = self.lites[i].save()
+        return self.lites[0].default_file_name()
+
+    def load(self):
+        for i in range(self.n_clusters):
+            self.lites[i].load()
+
+    def default_file_name(self):
+        return self.lites[0].default_file_name()
+        
 
 class DeepLite(object):
 
@@ -61,12 +103,14 @@ class DeepLite(object):
                     seed=None, keep_prob = 1.0, mixture_kernel=False, base=True,
                     npoint=300, ntrain=300, nvalid=300, points_type="fixed", clip_score=False,
                     step_size=1e-2, niter=None, patience=None, kernel_type="gaussian",
-                    gpu_count=1
+                    gpu_count=1, fn_ext = "", trainable=True
                     ):        
         
         self.target = target
         
+        self.fn_ext = fn_ext
         self.seed = seed
+        self.trainable = trainable
         
         self.model_params = dict( nlayer          = nlayer, 
                                     nneuron        = nneuron, 
@@ -193,8 +237,6 @@ class DeepLite(object):
                 elif kernel_type == "linear":
                     kernel  = PolynomialKernel(1.0,0.0)
                     sigma   = tf.constant(0.0, dtype=FDTYPE)
-                else:
-                    raise NameError("no such kernel type")
 
                 prop    = tf.exp(-tf.Variable(0.0, dtype=FDTYPE, trainable=nkernel!=1))
 
@@ -239,18 +281,20 @@ class DeepLite(object):
                              valid_kde=self.valid_kde, clip_score=clip_score)
 
             optimizer = tf.train.AdamOptimizer(self.train_params["step_size"])
-            raw_gradients, variables = zip(*optimizer.compute_gradients(loss))
-            gradients = [ tf.where(tf.is_nan(g), tf.zeros_like(g), g) for g in raw_gradients if g is not None]
-            gradients, self.states["grad_norm"] = tf.clip_by_global_norm(gradients, 100.0)
 
-            accum_gradients = [tf.Variable(tf.zeros_like(g), trainable=False) for g in gradients]
-            self.ops["zero_op"]  = [ag.assign(tf.zeros_like(ag)) for ag in accum_gradients]
+            if self.trainable:
+                raw_gradients, variables = zip(*optimizer.compute_gradients(loss))
+                gradients = [ tf.where(tf.is_nan(g), tf.zeros_like(g), g) for g in raw_gradients if g is not None]
+                gradients, self.states["grad_norm"] = tf.clip_by_global_norm(gradients, 100.0)
 
-            nbatch = tf.placeholder(FDTYPE, shape=[], name="nbatch")
-            self.train_params["nbatch"] = nbatch
+                accum_gradients = [tf.Variable(tf.zeros_like(g), trainable=False) for g in gradients]
+                self.ops["zero_op"]  = [ag.assign(tf.zeros_like(ag)) for ag in accum_gradients]
 
-            self.ops["accum_op"] = [accum_gradients[i].assign_add(g/nbatch) for i, g in enumerate(gradients)]
-            self.ops["train_step"] = optimizer.apply_gradients( zip(gradients, variables) )
+                nbatch = tf.placeholder(FDTYPE, shape=[], name="nbatch")
+                self.train_params["nbatch"] = nbatch
+
+                self.ops["accum_op"] = [accum_gradients[i].assign_add(g/nbatch) for i, g in enumerate(gradients)]
+                self.ops["train_step"] = optimizer.apply_gradients( zip(gradients, variables) )
             
             lambdas = [v for v in tf.trainable_variables() if "regularizers" in v.name]
             if len(lambdas)>0:
@@ -530,6 +574,9 @@ class DeepLite(object):
 
         if self.model_params["kernel_type"] == "linear":
             file_name += "_lin"
+
+        if len(self.fn_ext)!=0:
+            file_name += "_" + self.fn_ext
         
         if isinstance(self.seed, int) :
             file_name += "_s%02d" % self.seed

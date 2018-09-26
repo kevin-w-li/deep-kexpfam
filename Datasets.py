@@ -430,8 +430,9 @@ def clean_data(data, cor=0.98):
 
 class RealDataset(Dataset):
 
-    def __init__(self, idx=None, N=None, valid_thresh=0.0, noise_std = 0.0, 
-                ntest=0, seed=0, permute=True, itanh=False, whiten=True, dequantise=False, nkde=0):
+    def __init__(self, idx=None, N=None, valid_thresh=0.0, noise_std = 0.0, nkde=0,
+                ntest=0, seed=0, permute=True, itanh=False, whiten=True, dequantise=False, 
+                ):
         
         np.random.seed(seed) 
         np.random.shuffle(self.data)
@@ -447,7 +448,6 @@ class RealDataset(Dataset):
                 n = self.data.shape[0] 
                 self.data[:,d] += (np.random.rand(n)*2-1) * diff * 1
       
-
         self.nround   = 0
         self.pointer  = 0
 
@@ -473,12 +473,16 @@ class RealDataset(Dataset):
 
         if itanh:
             self.data, self.ptp, self.min, self.mean2 = apply_itanh(self.data)
-
+        
         self.ntest = ntest
-
+        
         self.all_data  = self.data.copy()
-        self.test_data = self.all_data[-ntest:]
-        self.data = self.all_data[:-ntest]
+        if ntest == 0:
+            self.test_data = self.all_data[:0] 
+            self.data = self.all_data[:]
+        else:
+            self.test_data = self.all_data[-ntest:]
+            self.data = self.all_data[:-ntest]
         nvalid = int(self.data.shape[0]*0.1)
         self.valid_data = self.data[-nvalid:]
         self.data = self.data[:-nvalid]
@@ -511,27 +515,14 @@ class RealDataset(Dataset):
         self.kde = kde
         return kde_logp , valid_kde_logp
 
-    def update_data(self, delete_idx = None):
+    def update_data(self):
         
-        if delete_idx is not None:
-            keep_idx = np.where(np.all(self.close_mat[delete_idx],0))[0]
-            self.data = self.data[keep_idx]
-
         self.close_mat = euclidean_distances(self.data) > self.valid_thresh
         self.N = self.data.shape[0]
 
     def valid_idx(self, idx):
 
         return np.where(np.all(self.close_mat[idx], 0))[0]
-
-    def sample_remove(self, n):
-        
-        n = min(n, self.N)
-        idx = np.random.choice(self.N,n,replace=False)
-        d = self.data[idx]
-        np.delete(self.data, idx, axis=0)
-        self.update_data()
-        return d
 
     def sample(self, n, add_noise=False):
 
@@ -691,10 +682,12 @@ class Mixture(RealDataset):
         self.ps = []
         self.props = []
         kwargs["permute"]=False
-        kwargs["ntest"]  =1
+        kwargs["ntest"]  =0
+        kwargs["whiten"]  =True
+        kwargs["itanh"]  = False
         for i in range(n_clusters):
             d = p.data[y==i]
-            p_i = ArrayDataset(d, p.name+"_%d"%i, *args, **kwargs)
+            p_i = ArrayDataset(d, p.name+"_%d"%i, *args, seed=seed, **kwargs)
             prop = np.sum(y==i) * 1.0 / p.data.shape[0]
             self.ps.append(p_i)
             self.props.append(prop)
