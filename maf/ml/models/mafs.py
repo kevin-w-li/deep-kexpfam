@@ -80,6 +80,7 @@ class MaskedAutoregressiveFlow:
         # theano evaluation functions, will be compiled when first needed
         self.eval_lprob_f = None
         self.eval_us_f = None
+        self.eval_grad_f = None
 
     def eval(self, x, log=True):
         """
@@ -100,6 +101,25 @@ class MaskedAutoregressiveFlow:
         lprob = self.eval_lprob_f(x.astype(dtype))
 
         return lprob if log else np.exp(lprob)
+
+    def grad(self, x):
+        if self.eval_grad_f is None:
+            const = []
+            val = []
+            for bn in self.bns:
+                const.extend([bn.m, bn.v])
+                val.extend([(bn.m, bn.bm), (bn.v, bn.bv)])
+
+            self.eval_grad_f = theano.function(
+                inputs=[self.input],
+                outputs=tt.grad(self.L[0], self.input, consider_constant=const),
+                givens=val)
+
+        x = x.astype(dtype)
+        out = np.empty_like(x)
+        for i in range(x.shape[0]):
+            out[i] = self.eval_grad_f(x[i:i+1])
+        return out
 
     def gen(self, n_samples=1, u=None):
         """
@@ -329,6 +349,7 @@ class MaskedAutoregressiveFlow_on_MADE:
         # theano evaluation functions, will be compiled when first needed
         self.eval_lprob_f = None
         self.eval_us_f = None
+        self.eval_grad_f = None
 
     def eval(self, x, log=True):
         """
@@ -349,6 +370,25 @@ class MaskedAutoregressiveFlow_on_MADE:
         lprob = self.eval_lprob_f(x.astype(dtype))
 
         return lprob if log else np.exp(lprob)
+
+    def grad(self, x):
+        if self.eval_grad_f is None:
+            const = []
+            val = []
+            for bn in self.bns:
+                const.extend([bn.m, bn.v])
+                val.extend([(bn.m, bn.bm), (bn.v, bn.bv)])
+
+            self.eval_grad_f = theano.function(
+                inputs=[self.input],
+                outputs=tt.grad(self.L[0], self.input, consider_constant=const),
+                givens=val)
+
+        x = x.astype(dtype)
+        out = np.empty_like(x)
+        for i in range(x.shape[0]):
+            out[i] = self.eval_grad_f(x[i:i+1])
+        return out
 
     def gen(self, n_samples=1, u=None):
         """
