@@ -118,4 +118,4 @@ def load_all_models(data_name, seed, dl_args, others_args):
             loglik["maf_mog"] = f["loglik_clean"].value
             samples["mog_maf"] = f["samples"].value
 
-    return p, models, samples
+    return p, models, loglik, samples
