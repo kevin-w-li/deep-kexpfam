@@ -242,6 +242,7 @@ class GaussianMade:
         self.eval_lprob_f = None
         self.eval_comps_f = None
         self.eval_us_f = None
+        self.eval_grad_f = None
 
     def eval(self, x, log=True):
         """
@@ -261,6 +262,18 @@ class GaussianMade:
         lprob = self.eval_lprob_f(x.astype(dtype))
 
         return lprob if log else np.exp(lprob)
+
+    def grad(self, x):
+        if self.eval_grad_f is None:
+            self.eval_grad_f = theano.function(
+                inputs=[self.input],
+                outputs=tt.grad(self.L[0], self.input))
+
+        x = x.astype(dtype)
+        out = np.empty_like(x)
+        for i in range(x.shape[0]):
+            out[i] = self.eval_grad_f(x[i:i+1])
+        return out
 
     def eval_comps(self, x):
         """
@@ -386,6 +399,7 @@ class MixtureOfGaussiansMade:
         self.eval_lprob_f = None
         self.eval_comps_f = None
         self.eval_us_f = None
+        self.eval_grad_f = None
 
     def eval(self, x, log=True):
         """
@@ -405,6 +419,18 @@ class MixtureOfGaussiansMade:
         lprob = self.eval_lprob_f(x.astype(dtype))
 
         return lprob if log else np.exp(lprob)
+
+    def grad(self, x):
+        if self.eval_grad_f is None:
+            self.eval_grad_f = theano.function(
+                inputs=[self.input],
+                outputs=tt.grad(self.L[0], self.input))
+
+        x = x.astype(dtype)
+        out = np.empty_like(x)
+        for i in range(x.shape[0]):
+            out[i] = self.eval_grad_f(x[i:i+1])
+        return out
 
     def eval_comps(self, x):
         """
