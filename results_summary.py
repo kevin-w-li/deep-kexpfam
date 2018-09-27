@@ -35,37 +35,39 @@ def create_model_id(data_name, model_name, mode, n_hiddens, act_fun, n_comps, se
     return id
 
 
-def load_all_models(data_name, seed, dl_args, others_args):
-    
+def load_all_models(data_name, seed, dl_args, others_args, skip_theano=False):
+
     p = load_data(data_name, seed=seed, itanh=False, whiten=True, N=5000)
-    
+
     loglik = dict()
     models = dict()
     samples = dict()
 
-    
+
     n_hiddens = others_args["n_hiddens"]
     n_comps = others_args["n_comps"]
     n_layers = others_args["n_layers"]
     act_fun = others_args["act_fun"]
     mode =  others_args["mode"]
-    
+
     dl_model = DeepLite(p, seed=seed, **dl_args)
     dl_model.load()
     models["dkef"] = dl_model
-    
+
     fn = "results/train_sample/%s.h5" %dl_model.default_file_name()
-    
+
     if os.path.isfile(fn):
         with h5.File(fn,'r') as f:
             assert np.allclose(f["idx"].value,  p.idx)
             loglik["dkef"] = f["loglik_clean"].value
 
-        
+    if skip_theano:
+        return p, models, loglik, samples
+
     model_fn = create_model_id(data_name, "made", mode, n_hiddens, act_fun, None, seed=seed)
     model_fn = "maf_models/%s/%s.pkl" % (p.name.lower(), model_fn)
     models["made"] = load(model_fn)
-    
+
     fn = "data/made/%s_D%02d_n%d_nn%d_nt200_p50_made_samples_s%02d.h5" % (p.name, p.D, p.noise_std*100, n_hiddens[0], seed)
     if os.path.isfile(fn):
         with h5.File(fn,'r') as f:
@@ -73,11 +75,11 @@ def load_all_models(data_name, seed, dl_args, others_args):
             loglik["made"] = f["loglik_clean"].value
             samples["made"] = f["samples"].value
 
-    
+
     model_fn = create_model_id(data_name, "mog_made", mode, n_hiddens, act_fun, n_comps, seed=seed)
     model_fn = "maf_models/%s/%s.pkl" % (p.name.lower(), model_fn)
     models["maf_mog"] = load(model_fn)
-    
+
     fn = "data/mog_made/%s_D%02d_n%d_nn%d_nt200_p50_mog_made_samples_s%02d.h5" % (p.name, p.D, p.noise_std*100, n_hiddens[0], seed)
     if os.path.isfile(fn):
         with h5.File(fn,'r') as f:
