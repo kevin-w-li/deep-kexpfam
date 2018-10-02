@@ -50,16 +50,14 @@ p = load_data(sys.argv[1],D=2,  N=N, seed=seed, rotate=dname=="funnel")
 grid_points  = get_grid(np.linspace(-5,5,4), 0, 1, np.zeros(2))
 grid_data_one= np.linspace(-8,8,100)
 grid_data    = get_grid(grid_data_one, idx_i, idx_j, np.zeros(2))
-'''
+
 print "====================================" 
 print p.name
 # deep lite
-dl_model = DeepLite(p, npoint=npoint, nlayer=nlayer, nneuron=nneuron, init_log_lam=-3, points_std=0.0, keep_prob=1.0, init_weight_std=1.0, noise_std=0.0,
-                    points_type="fixed", log_lam_weights=-6, step_size=1e-3, mixture_kernel=False, init_log_sigma=np.linspace(0,1,1), base=True,
-                    niter=niter, ntrain=ntrain, nvalid=nvalid, patience=patience, seed=seed,gpu_count=1)
-res = dl_model.fit(niter=niter, ntrain=ntrain, nvalid=nvalid,ntest=500, nbatch=1, patience=patience)
+dl_model = DeepLite(p, npoint=npoint, nlayer=nlayer, nneuron=nneuron, init_log_lam=-3, points_std=0.0, keep_prob=1.0, init_weight_std=1.0, noise_std=0.0, points_type="fixed", log_lam_weights=-6, step_size=1e-3, mixture_kernel=False, init_log_sigma=np.linspace(0,1,1), base=True, niter=niter, ntrain=ntrain, nvalid=nvalid, patience=patience, seed=10,gpu_count=1, fn_ext = "curve")
+res = dl_model.fit(niter=niter, ntrain=ntrain, nvalid=nvalid, nbatch=1, patience=patience)
 dl_model.set_test(True, 0) 
-dl_model.fit_alpha(5000)
+dl_model.fit_alpha()
 dl_model.logZ = None
 dl_model.estimate_normaliser(n=2*10**6, batch_size=10**5, std=p.test_data.std()*2.0)
 test_loglik = dl_model.estimate_data_lik(p.test_data, batch_size=p.test_data.shape[0])
@@ -75,6 +73,7 @@ np.savez("figs/dl_model_%s_data"%p.name,
     dl_model_kernel_vals=dl_model_kernel_vals, dl_model_logpdf=dl_model_logpdf, dl_model_loglik=dl_model_loglik)
     
 
+'''
 # simple_lite
 sl_model = DeepLite(p, npoint=npoint, nlayer=0, nneuron=nneuron, init_log_lam=-3, points_std=0.0, keep_prob=1.0, init_weight_std=1.0, noise_std=0.0,
                     points_type="fixed", log_lam_weights=-6, step_size=1e-3, mixture_kernel=False, init_log_sigma=np.linspace(0,1,1), base=True,
@@ -160,7 +159,7 @@ np.savez("figs/kcef_%s_data"%p.name,
     grid_points=grid_points, rid_data_one=grid_data_one, grid_data = grid_data,
     kcef_logpdf=kcef_logpdf, kcef_loglik=kcef_loglik)
     
-'''
+
 # maf 
 maf_data_obj = ex.load_data(p.name.lower(), D=p.D, noise_std=0, seed=seed, itanh=False, whiten=False, N=N, rotate=dname=="funnel")
 
@@ -206,7 +205,7 @@ np.savez("figs/others_%s_data"%p.name,
     grid_points=grid_points, rid_data_one=grid_data_one, grid_data = grid_data,
     made_pdf=made_pdf, made_mog_pdf=mog_made_pdf, nvp_pdf=nvp_pdf, maf_pdf=maf_pdf, maf_mog_pdf=mog_maf_pdf,
     made_loglik=made_loglik, made_mog_loglik=mog_made_loglik, nvp_loglik=nvp_loglik, maf_loglik=maf_loglik, maf_mog_loglik=mog_maf_loglik,)
-''' 
+
 np.savez("figs/%s_data"%p.name, 
     eval_points = eval_points, eval_grid = eval_grid,
     grid_points=grid_points, rid_data_one=grid_data_one, grid_data = grid_data,
@@ -217,6 +216,4 @@ np.savez("figs/%s_data"%p.name,
     kcef_logpdf=kcef_logpdf, kcef_loglik=kcef_loglik,
     made_pdf=made_pdf, made_mog_pdf=mog_made_pdf, nvp_pdf=nvp_pdf, maf_pdf=maf_pdf, maf_mog_pdf=mog_maf_pdf,
     made_loglik=made_loglik, made_mog_loglik=mog_made_loglik, nvp_loglik=nvp_loglik, maf_loglik=maf_loglik, maf_mog_loglik=mog_maf_loglik,)
-    
-
-''' 
+'''

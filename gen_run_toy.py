@@ -4,12 +4,12 @@ import time
 env   = "local"
 device = 0
 
-dnames = ["funnel", "spiral", "uniform", "ring", "cosine"]
+dnames = ["ring","funnel" ,"spiral","uniform", "cosine","multiring", "grid", "banana"]
 
 ps = []
 njob =1
 
-for dset in dnames[device:device+1]:
+for dset in dnames:
 
     base_command = "python run_toy.py %s" % dset
 

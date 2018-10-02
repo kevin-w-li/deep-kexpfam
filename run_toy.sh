@@ -1,2 +1,2 @@
 #!/bin/bash
-CUDA_VISIBLE_DEVICES=0 python run_toy.py funnel
+CUDA_VISIBLE_DEVICES=0 python run_toy.py grid
