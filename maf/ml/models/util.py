@@ -8,6 +8,16 @@ import matplotlib.pyplot as plt
 import cPickle as pickle
 
 
+def grad_helper(x, grad_f, f):
+    out = np.empty_like(x)
+    for i in range(x.shape[0]):
+        out[i] = grad_f(x[i:i+1])
+        if not np.isfinite(out[i]).all():
+            import numdifftools as nd
+            out[i] = nd.Gradient(lambda a: f(a[np.newaxis, :]))(x[i])
+    return out
+
+
 def isposint(n):
     """
     Determines whether number n is a positive integer.
