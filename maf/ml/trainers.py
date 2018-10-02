@@ -134,7 +134,8 @@ class SGD:
 
             if iter % monitor_every == 0:
 
-                epoch = iter * float(minibatch) / self.n_trn_data
+                #epoch = iter * float(minibatch) / self.n_trn_data
+                epoch = iter
 
                 # do validation
                 if self.do_validation:

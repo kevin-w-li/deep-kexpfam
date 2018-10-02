@@ -47,18 +47,13 @@ def pow_10(x, name, **kwargs):
 class LiteModel:
 
 
-    def __init__(self, kernel, alpha = None, points = None, 
+    def __init__(self, kernel, npoint, alpha = None, points = None, 
                 init_log_lam = 0.0, log_lam_weights=-3, noise_std=0.0, 
                 simple_lite=False, lam = None, base=False):
         
         self.kernel = kernel
         self.base   = base
 
-        if alpha is None:
-            self.alpha = tf.zeros([1], dtype=FDTYPE)
-        else:
-            self.alpha = alpha
-        
         if simple_lite:
             assert lam is not None
             self.lam_norm = lam
@@ -70,13 +65,19 @@ class LiteModel:
             with tf.name_scope("regularizers"):
                 self.lam_norm    = pow_10(-1000, "lam_norm", trainable=False)
                 self.lam_alpha   = pow_10(init_log_lam, "lam_alpha", trainable=True)
-                self.lam_curve   = pow_10(-1000, "lam_curve", trainable=False)
+                self.lam_curve   = pow_10(init_log_lam, "lam_curve", trainable=True)
                 self.lam_weights = pow_10(log_lam_weights, "lam_weights", trainable=False)
                 self.lam_kde     = pow_10(-1000, "lam_kde", trainable=False)
                 self.noise_std   = noise_std
 
         if points is not None:
             self.set_points(points)
+
+        if alpha is None:
+            self.alpha = tf.Variable(tf.zeros(npoint), dtype=FDTYPE, trainable=False, name="kn_alpha")
+        else:
+            self.alpha = alpha
+        
 
         if base:
             self.base = GaussianBase(self.ndim_in[0], 2)
@@ -209,8 +210,8 @@ class LiteModel:
             lin   = lin  + self.lam_kde * tf.einsum("mij,ij->m", delta, kde_delta) / npair
         
         alpha = tf.matrix_solve(quad, lin[:,None])[:,0]
-        alpha_step = lambda a: (tf.matmul(quad, a[:,None]) - lin[:,None])[:,0]
-        return alpha,H, G2, H2, GqG, qG2, qH, HqH, qH2, data, alpha_step
+
+        return alpha, H, G2, H2, GqG, qG2, qH, HqH, qH2, data, quad, lin
 
 
     def opt_score(self, data=None, alpha=None, kde=None):
@@ -219,8 +220,8 @@ class LiteModel:
         '''
         if alpha is None:
             alpha = self.alpha
-        
-        alpha_opt, H, G2, H2, GqG, qG2, qH, HqH, qH2, data,_  = self.opt_alpha(data, kde)
+
+        alpha_opt, H, G2, H2, GqG, qG2, qH, HqH, qH2, data, _, _ = self.opt_alpha(data, kde)
         alpha_assign_op = tf.assign(alpha, alpha_opt)
 
         s2     =  tf.einsum('i,i->', alpha, H) + qH
@@ -243,16 +244,16 @@ class LiteModel:
     def val_score(self, train_data=None, valid_data=None, test_data=None, train_kde=None, valid_kde=None, clip_score=False):
         
 
-        self.alpha, H, G2, H2, GqG, qG2, qH, HqH, qH2, train_data, _ = self.opt_alpha(train_data, train_kde)
+        alpha, H, G2, H2, GqG, qG2, qH, HqH, qH2, train_data, _, _ = self.opt_alpha(train_data, train_kde)
+        save_alpha = tf.assign(self.alpha, alpha)
 
         #  ====== validation ======
         score, H, G2, H2, GqG, qG2, qH, HqH, qH2, valid_data = self.individual_score(
-                                            data=valid_data, alpha=self.alpha, add_noise=True)
+                                            data=valid_data, alpha=alpha, add_noise=True)
         
         score_mean = tf.reduce_mean(score)
         score_std  = tf.sqrt(tf.reduce_mean(score**2) - score_mean**2)
-        count = tf.reduce_sum(tf.cast(tf.logical_or(score < score_mean-3*score_std, 
-                                            score > score_mean+100*score_std), "int32"))
+        count = tf.reduce_sum(tf.cast(score < score_mean-3*score_std, "int32"))
 
         if clip_score:
             score = tf.clip_by_value(score, score_mean-3*score_std,np.inf)
@@ -260,14 +261,15 @@ class LiteModel:
         score = tf.reduce_mean(score)
 
         if test_data is not None: 
-            test_score = self.score(data=test_data, alpha=self.alpha, 
-                                                    add_noise=True)[0]
+            test_score = self.score(data=test_data, alpha=self.alpha, add_noise=True)[0]
         else:
             test_score = tf.constant(0.0, dtype=FDTYPE)
 
-        r_norm =  self.get_fun_rkhs_norm()
-        l_norm =  self.get_fun_l2_norm()
-        curve  =  0.5 * (tf.einsum('i,ij,j', self.alpha, tf.reduce_mean(H2,2), self.alpha) + tf.reduce_mean(qH2)) + tf.einsum("i,i->", self.alpha, tf.reduce_mean(HqH,1))
+        r_norm =  self.get_fun_rkhs_norm(alpha)
+        l_norm =  self.get_fun_l2_norm(alpha)
+        curve  =  0.5 * (tf.einsum('i,ij,j', alpha, tf.reduce_mean(H2,2), alpha) + 
+                    tf.reduce_mean(qH2)) + tf.einsum("i,i->", self.alpha, tf.reduce_mean(HqH,1))
+
         w_norm =  self.get_weights_norm()
         loss   =  score + 0.5 * (  w_norm * self.lam_weights )
         if valid_kde is not None:
@@ -277,52 +279,9 @@ class LiteModel:
             k_loss = tf.zeros([], dtype=FDTYPE)
 
 
-        return loss, score, train_data, valid_data, r_norm, l_norm, curve, w_norm, k_loss, test_score, count
+        return loss, score, train_data, valid_data, r_norm, l_norm, curve, w_norm, k_loss, test_score, count, \
+                save_alpha
         
-    def step_score(self, train_data=None, valid_data=None, test_data=None, lr = 0.001, 
-                        train_kde=None, valid_kde=None):
-        
-        _, H, G2, H2, GqG, qG2, qH, HqH, qH2, train_data, step = self.opt_alpha(train_data, train_kde)
-        with tf.variable_scope("alpha_step", reuse=tf.AUTO_REUSE) as scope:
-            delta = tf.get_variable("alpha_momentum", (self.npoint,), 
-                    dtype=FDTYPE, trainable=False, initializer=tf.zeros_initializer)
-
-        delta = 0.9 * delta - step(self.alpha) * lr
-        self.alpha = self.alpha + delta
-
-        #  ====== validation ======
-        score, H, G2, H2, GqG, qG2, qH, HqH, qH2, valid_data = self.individual_score(
-                                            data=valid_data, alpha=self.alpha, add_noise=True)
-        
-        score_mean = tf.reduce_mean(score)
-        score_std  = tf.sqrt(tf.reduce_mean(score**2) - score_mean**2)
-        count = tf.reduce_sum(tf.cast(tf.logical_or(score < score_mean-2*score_std, 
-                                            score > score_mean+100*score_std), "int32"))
-        
-        score = tf.clip_by_value(score, score_mean-2*score_std,score_mean+100*score_std)
-        score = tf.reduce_mean(score)
-
-        if test_data is not None: 
-            test_score = self.score(data=test_data, alpha=self.alpha, 
-                                                    add_noise=True)[0]
-        else:
-            test_score = tf.constant(0.0, dtype=FDTYPE)
-
-        r_norm =  self.get_fun_rkhs_norm()
-        l_norm =  self.get_fun_l2_norm()
-        curve  =  0.5 * (tf.einsum('i,ij,j', self.alpha, tf.reduce_mean(H2,2), self.alpha) + tf.reduce_mean(qH2)) + tf.einsum("i,i->", self.alpha, tf.reduce_mean(HqH,1))
-        w_norm =  self.get_weights_norm()
-        loss   =  score + 0.5 * (  w_norm * self.lam_weights)
-        if valid_kde is not None:
-            k_loss =  self.kde_loss(valid_data, valid_kde)
-            loss = loss + 0.5 * self.lam_kde * k_loss
-        else:   
-            k_loss = tf.zeros([], dtype=FDTYPE)
-
-
-        return loss, score, train_data, valid_data, r_norm, l_norm, curve, w_norm, k_loss, test_score, count
-        
-    
     def set_points(self, points):
         
         self.X = points
@@ -402,12 +361,15 @@ class LiteModel:
         return hess, grad, fun
         
 
-    def get_fun_l2_norm(self):
-        
-        return tf.reduce_sum(tf.square(self.alpha))
+    def get_fun_l2_norm(self, alpha=None):
+        if alpha is None:
+            alpha = self.alpha
+        return tf.reduce_sum(tf.square(alpha))
 
-    def get_fun_rkhs_norm(self, K=None):
-        return tf.einsum('i,ij,j', self.alpha, self.K, self.alpha)
+    def get_fun_rkhs_norm(self, alpha=None):
+        if alpha is None:
+            alpha = self.alpha
+        return tf.einsum('i,ij,j', alpha, self.K, alpha)
 
     def get_weights_norm(self):
         return self.kernel.get_weights_norm()
