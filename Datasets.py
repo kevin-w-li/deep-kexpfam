@@ -276,14 +276,14 @@ class Funnel(ToyDataset):
 
 class Ring(ToyDataset):
 
-    def __init__(self, sigma=0.2, D=2, nring = 1):
+
+    def __init__(self, sigma=0.5, D=2, nring = 3):
 
         assert D >= 2
         
         self.sigma = sigma
         self.D = D
-        
-        self.radia = np.array([5])
+        self.radia = np.array([1, 3, 5])[:nring]
         self.name  = "ring"
         self.has_grad = True
         
@@ -297,32 +297,9 @@ class Ring(ToyDataset):
         samples = rings_sample(N, self.D, self.sigma, self.radia)
         return samples
 
-class Multiring(ToyDataset):
-
-    def __init__(self, sigma=0.2, D=2):
-
-        assert D >= 2
-        
-        self.sigma = sigma
-        self.D = D
-        self.radia = np.array([1, 3, 5])
-        self.name  = "multiring"
-        self.has_grad = True
-        
-    def grad_multiple(self, X):
-        return rings_log_pdf_grad(X, self.sigma, self.radia)
-
-    def logpdf_multiple(self, X):
-        return rings_log_pdf(X, self.sigma, self.radia)
-
-    def sample(self, N):
-        samples = rings_sample(N, self.D, self.sigma, self.radia)
-        return samples
-
-
 class Grid(ToyDataset):
 
-    def __init__(self, sigma=0.5, D=2, sep=8):
+    def __init__(self, sigma=0.5, D=2):
 
         assert D >= 2
         
@@ -331,7 +308,7 @@ class Grid(ToyDataset):
         self.name  = "grid"
         self.has_grad = True
         np.random.seed(1)
-        self._g = GaussianGrid(D, sigma, sep=sep)
+        self._g = GaussianGrid(D, sigma)
         
     def grad_multiple(self, X):
         return self._g.grad_multiple(X)
@@ -394,29 +371,11 @@ class Cosine(ToyDataset):
         x[:,1] += x1
         return x
 
-class Uniform(ToyDataset):
-
-     def __init__(self, D=2,lims = 3):
-         self.lims = lims
-         self.D = D
-         self.has_grad = True
-
-     def sample(self,n):
-         return 2*(np.random.rand(n, self.D) - 0.5) * self.lims
-
-     def logpdf_multiple(self, x):
-         pdf = - np.ones(x.shape[0]) * np.inf
-         inbounds = np.all( (x<self.lims) * ( x > -self.lims), -1)
-         pdf[inbounds] = -np.log((2*self.lims)**self.D)
-         return pdf
-         
-     def grad_multiple(self, x):
-         
-         return np.zeros_like(x) 
+    
 
 class Banana(ToyDataset):
     
-    def __init__(self, bananicity = 0.2, sigma=2, D=2):
+    def __init__(self, bananicity = 0.03, sigma=10, D=2):
         self.bananicity = bananicity
         self.sigma = sigma
         self.D = D
@@ -743,7 +702,7 @@ class ArrayDataset(RealDataset):
 
 class RealToy(RealDataset):
 
-    def __init__(self, name, D, n=10000, rotate=False, data_args={}, *args, **kwargs):
+    def __init__(self, name, D, n=5000, rotate=False, data_args={}, *args, **kwargs):
            
         self.name = name
         name = name.title() 
@@ -767,7 +726,6 @@ class RealToy(RealDataset):
 
         kwargs["whiten"] = False
         kwargs["itanh"] = False
-        kwargs["permute"] =False
 
         super(RealToy, self).__init__(*args, **kwargs)
 
@@ -778,19 +736,6 @@ class RealToy(RealDataset):
     def grad_multiple(self, data):
         return self.dist.grad_multiple(self.itrans(data))
 
-    def itrans(self, data):
-        
-        if self.itanh:
-            data = inv_itanh(data, self.ptp, self.min, self.mean2)
-
-        if self.whiten:
-            data = inv_whiten(data, self.W, self.mean)
-            
-        data = data[:, np.argsort(self.idx)]
-
-        data = np.dot(data, self.M)
-
-        return data
 
 def load_data(dname, noise_std=0.0, seed=1, D=None, data_args={}, **kwargs):
     dname = dname.lower()
@@ -808,9 +753,9 @@ def load_data(dname, noise_std=0.0, seed=1, D=None, data_args={}, **kwargs):
         p = Power(noise_std=noise_std, ntest=1000, seed=seed, **kwargs)
     elif dname[0] == 'h':
         p = HepMass(noise_std=noise_std, ntest=1000, seed=seed, **kwargs)
-    elif dname[0:2] == 'mi':
+    elif dname[0] == 'm':
         p = MiniBoone(noise_std=noise_std, ntest=1000, seed=seed, **kwargs)
-    elif dname[0] in ['f','r', 's', 'b', 'c', 'g', 'm', 'u']:
+    elif dname[0] in ['f','r', 's', 'b', 'c', 'g']:
         assert D is not None
         p = RealToy(dname.title(), D=D, noise_std=0.0, ntest=1000, seed=seed, data_args=data_args, **kwargs)
     return p

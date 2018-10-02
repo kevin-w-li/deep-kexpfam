@@ -168,15 +168,13 @@ class Gaussian2Mixture(Mixture):
         return params
 
 class GaussianGrid(Mixture):
-    def __init__(self, D, sigma, sep = 1, weights=None, num_components=None):
+    def __init__(self, D, sigma, weights=None, num_components=None):
         mus = np.array(hypercube(D))
-        mus *= sep
         
         if num_components is None:
             num_components = D
         inds = np.random.permutation(len(mus))[:num_components]
         mus = mus[inds]
-        mus = mus - mus.mean(0)
         
         self.sigma=sigma
         self.name = "grid"

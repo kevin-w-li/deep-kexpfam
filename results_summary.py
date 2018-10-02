@@ -78,7 +78,7 @@ def load_all_models(data_name, seed, dl_args, others_args, skip_theano=False):
 
     model_fn = create_model_id(data_name, "mog_made", mode, n_hiddens, act_fun, n_comps, seed=seed)
     model_fn = "maf_models/%s/%s.pkl" % (p.name.lower(), model_fn)
-    models["made_mog"] = load(model_fn)
+    models["maf_mog"] = load(model_fn)
 
     fn = "data/mog_made/%s_D%02d_n%d_nn%d_nt200_p50_mog_made_samples_s%02d.h5" % (p.name, p.D, p.noise_std*100, n_hiddens[0], seed)
     if os.path.isfile(fn):
@@ -118,6 +118,6 @@ def load_all_models(data_name, seed, dl_args, others_args, skip_theano=False):
         with h5.File(fn,'r') as f:
             assert np.allclose(f["idx"].value,  p.idx)
             loglik["maf_mog"] = f["loglik_clean"].value
-            samples["maf_mog"] = f["samples"].value
+            samples["mog_maf"] = f["samples"].value
 
     return p, models, loglik, samples

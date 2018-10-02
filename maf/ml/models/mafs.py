@@ -103,7 +103,7 @@ class MaskedAutoregressiveFlow:
         return lprob if log else np.exp(lprob)
 
     def grad(self, x):
-        if getattr(self, 'eval_grad_f', None) is None:
+        if self.eval_grad_f is None:
             const = []
             val = []
             for bn in self.bns:
@@ -372,7 +372,7 @@ class MaskedAutoregressiveFlow_on_MADE:
         return lprob if log else np.exp(lprob)
 
     def grad(self, x):
-        if getattr(self, 'eval_grad_f', None) is None:
+        if self.eval_grad_f is None:
             const = []
             val = []
             for bn in self.bns:
