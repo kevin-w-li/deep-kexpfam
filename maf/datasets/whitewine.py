@@ -16,7 +16,7 @@ class WHITEWINE:
 
     def __init__(self, noise_std=0.0, seed=1, **kwargs):
 
-        dist = WhiteWine(noise_std=noise_std, seed=seed, ntest=1000, dequantise=True, **kwargs)
+        dist = WhiteWine(noise_std=noise_std, seed=seed, dequantise=True, **kwargs)
         trn, val, tst, idx = dist.data, dist.valid_data, dist.test_data, dist.idx
 
         self.trn = self.Data(trn)
@@ -24,6 +24,7 @@ class WHITEWINE:
         self.tst = self.Data(tst)
         self.seed= seed
         self.idx = idx
+        self.N_prop = dist.N_prop
 
         self.n_dims = self.trn.x.shape[1]
 
