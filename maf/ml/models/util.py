@@ -6,6 +6,7 @@ import theano
 import theano.tensor as tt
 import matplotlib.pyplot as plt
 import cPickle as pickle
+import numdifftools as nd
 
 
 def grad_helper(x, grad_f, f):
@@ -13,7 +14,6 @@ def grad_helper(x, grad_f, f):
     for i in range(x.shape[0]):
         out[i] = grad_f(x[i:i+1])
         if not np.isfinite(out[i]).all():
-            import numdifftools as nd
             out[i] = nd.Gradient(lambda a: f(a[np.newaxis, :]))(x[i])
     return out
 
