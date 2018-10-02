@@ -7,6 +7,7 @@ import theano.tensor as tt
 
 import layers as layers
 import mades as mades
+import util
 
 dtype = theano.config.floatX
 
@@ -115,11 +116,7 @@ class MaskedAutoregressiveFlow:
                 outputs=tt.grad(self.L[0], self.input, consider_constant=const),
                 givens=val)
 
-        x = x.astype(dtype)
-        out = np.empty_like(x)
-        for i in range(x.shape[0]):
-            out[i] = self.eval_grad_f(x[i:i+1])
-        return out
+        return util.grad_helper(x.astype(dtype), self.eval_grad_f, self.eval)
 
     def gen(self, n_samples=1, u=None):
         """
@@ -384,11 +381,7 @@ class MaskedAutoregressiveFlow_on_MADE:
                 outputs=tt.grad(self.L[0], self.input, consider_constant=const),
                 givens=val)
 
-        x = x.astype(dtype)
-        out = np.empty_like(x)
-        for i in range(x.shape[0]):
-            out[i] = self.eval_grad_f(x[i:i+1])
-        return out
+        return util.grad_helper(x.astype(dtype), self.eval_grad_f, self.eval)
 
     def gen(self, n_samples=1, u=None):
         """

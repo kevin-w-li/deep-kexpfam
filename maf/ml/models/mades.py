@@ -269,11 +269,7 @@ class GaussianMade:
                 inputs=[self.input],
                 outputs=tt.grad(self.L[0], self.input))
 
-        x = x.astype(dtype)
-        out = np.empty_like(x)
-        for i in range(x.shape[0]):
-            out[i] = self.eval_grad_f(x[i:i+1])
-        return out
+        return util.grad_helper(x.astype(dtype), self.eval_grad_f, self.eval)
 
     def eval_comps(self, x):
         """
@@ -426,11 +422,7 @@ class MixtureOfGaussiansMade:
                 inputs=[self.input],
                 outputs=tt.grad(self.L[0], self.input))
 
-        x = x.astype(dtype)
-        out = np.empty_like(x)
-        for i in range(x.shape[0]):
-            out[i] = self.eval_grad_f(x[i:i+1])
-        return out
+        return util.grad_helper(x.astype(dtype), self.eval_grad_f, self.eval)
 
     def eval_comps(self, x):
         """
