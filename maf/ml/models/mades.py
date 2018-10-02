@@ -264,7 +264,7 @@ class GaussianMade:
         return lprob if log else np.exp(lprob)
 
     def grad(self, x):
-        if self.eval_grad_f is None:
+        if getattr(self, 'eval_grad_f', None) is None:
             self.eval_grad_f = theano.function(
                 inputs=[self.input],
                 outputs=tt.grad(self.L[0], self.input))
@@ -417,7 +417,7 @@ class MixtureOfGaussiansMade:
         return lprob if log else np.exp(lprob)
 
     def grad(self, x):
-        if self.eval_grad_f is None:
+        if getattr(self, 'eval_grad_f', None) is None:
             self.eval_grad_f = theano.function(
                 inputs=[self.input],
                 outputs=tt.grad(self.L[0], self.input))

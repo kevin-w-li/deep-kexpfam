@@ -10,3 +10,4 @@ results/*
 tb_logs/*
 maf_models/*
 KCEF/*
+*.npz

@@ -7,6 +7,7 @@ from nystrom_kexpfam.density import rings_log_pdf_grad, rings_sample, rings_log_
 from nystrom_kexpfam.data_generators.Gaussian import GaussianGrid
 from Utils import support_1d
 from sklearn.metrics.pairwise import euclidean_distances
+from scipy.spatial.distance import pdist
 import h5py as h5
 from scipy.stats import truncnorm as tnorm
 from scipy.linalg import expm
@@ -15,14 +16,14 @@ from autograd import elementwise_grad
 from sklearn.neighbors import KernelDensity
 from sklearn.model_selection import GridSearchCV
 
-from sklearn.cluster import KMeans, AgglomerativeClustering
+from sklearn.cluster import KMeans, SpectralClustering
 
 def apply_whiten(data):
     
     mean = data.mean(0)
     data = data - data.mean(0)
     u, s, vt = np.linalg.svd(data[:10**4])
-    W = vt.T/s * np.sqrt(data.shape[0])
+    W = vt.T/s * np.sqrt(u.shape[0])
     data = np.dot(data, W)
     return data, W, mean
 
@@ -106,8 +107,37 @@ class ToyDataset(Dataset):
         raise NotImplementedError
 
     def grad(self, x):
-        return grad_multiple(self.logpdf, x)
+        return self.grad_multiple(self.logpdf, x)
 
+    def score(self, x):
+        return -0.5*self.grad_multiple(x**2,1)
+
+class Door(ToyDataset):
+    def __init__(self, width=2.0, D=2, h_min = 0.5, h_rate = 2.0):
+        
+        self.width = width
+        self.D = D
+        self.h_min = h_min
+        self.h_rate = h_rate
+        self.has_grad = True
+        self.name = "door"
+
+    def sample(self, N):
+        s = np.zeros((N, 2))
+        s[:,0] = np.random.randn(N)*self.width
+        s[:,1] = (self.h_rate * np.cos(0.7*s[:,0])**2 + self.h_min) * np.random.randn(N) 
+        return s
+
+    def logpdf_multiple(self, x):
+        
+        logpdf  = norm.logpdf(x[:,0], 0, self.width)
+        logpdf += norm.logpdf(x[:,1], 0, (self.h_rate * np.cos(0.7*x[:,0])**2  + self.h_min))
+        return logpdf
+
+    def grad_multiple(self, x):
+        
+        g = elementwise_grad(self.logpdf_multiple)
+        return g(x)
 
 
 class Spiral(ToyDataset):
@@ -276,14 +306,14 @@ class Funnel(ToyDataset):
 
 class Ring(ToyDataset):
 
-
-    def __init__(self, sigma=0.5, D=2, nring = 3):
+    def __init__(self, sigma=0.2, D=2, nring = 1):
 
         assert D >= 2
         
         self.sigma = sigma
         self.D = D
-        self.radia = np.array([1, 3, 5])[:nring]
+        
+        self.radia = np.array([5])
         self.name  = "ring"
         self.has_grad = True
         
@@ -297,9 +327,32 @@ class Ring(ToyDataset):
         samples = rings_sample(N, self.D, self.sigma, self.radia)
         return samples
 
+class Multiring(ToyDataset):
+
+    def __init__(self, sigma=0.2, D=2):
+
+        assert D >= 2
+        
+        self.sigma = sigma
+        self.D = D
+        self.radia = np.array([1, 3, 5])
+        self.name  = "multiring"
+        self.has_grad = True
+        
+    def grad_multiple(self, X):
+        return rings_log_pdf_grad(X, self.sigma, self.radia)
+
+    def logpdf_multiple(self, X):
+        return rings_log_pdf(X, self.sigma, self.radia)
+
+    def sample(self, N):
+        samples = rings_sample(N, self.D, self.sigma, self.radia)
+        return samples
+
+
 class Grid(ToyDataset):
 
-    def __init__(self, sigma=0.5, D=2):
+    def __init__(self, sigma=0.5, D=2, sep=8):
 
         assert D >= 2
         
@@ -308,7 +361,7 @@ class Grid(ToyDataset):
         self.name  = "grid"
         self.has_grad = True
         np.random.seed(1)
-        self._g = GaussianGrid(D, sigma)
+        self._g = GaussianGrid(D, sigma, sep=sep)
         
     def grad_multiple(self, X):
         return self._g.grad_multiple(X)
@@ -371,11 +424,29 @@ class Cosine(ToyDataset):
         x[:,1] += x1
         return x
 
-    
+class Uniform(ToyDataset):
+
+     def __init__(self, D=2,lims = 3):
+         self.lims = lims
+         self.D = D
+         self.has_grad = True
+
+     def sample(self,n):
+         return 2*(np.random.rand(n, self.D) - 0.5) * self.lims
+
+     def logpdf_multiple(self, x):
+         pdf = - np.ones(x.shape[0]) * np.inf
+         inbounds = np.all( (x<self.lims) * ( x > -self.lims), -1)
+         pdf[inbounds] = -np.log((2*self.lims)**self.D)
+         return pdf
+         
+     def grad_multiple(self, x):
+         
+         return np.zeros_like(x) 
 
 class Banana(ToyDataset):
     
-    def __init__(self, bananicity = 0.03, sigma=10, D=2):
+    def __init__(self, bananicity = 0.2, sigma=2, D=2):
         self.bananicity = bananicity
         self.sigma = sigma
         self.D = D
@@ -431,8 +502,8 @@ def clean_data(data, cor=0.98):
 class RealDataset(Dataset):
 
     def __init__(self, idx=None, N=None, valid_thresh=0.0, noise_std = 0.0, nkde=0,
-                ntest=0, seed=0, permute=True, itanh=False, whiten=True, dequantise=False, 
-                ):
+                ntest = None, seed=0, permute=True, itanh=False, whiten=True, dequantise=False, 
+                N_train = None):
         
         np.random.seed(seed) 
         np.random.shuffle(self.data)
@@ -440,6 +511,9 @@ class RealDataset(Dataset):
         if idx is not None:
             self.data = self.data[:,idx]
         if N is not None:
+            self.data = self.data[:N]
+        else:   
+            N = self.data.shape[0]
             self.data = self.data[:N]
         
         if dequantise:
@@ -474,7 +548,11 @@ class RealDataset(Dataset):
         if itanh:
             self.data, self.ptp, self.min, self.mean2 = apply_itanh(self.data)
         
-        self.ntest = ntest
+        if ntest is None:
+            self.ntest = int(N * 0.1)
+            ntest = self.ntest
+        else:
+            self.ntest = ntest
         
         self.all_data  = self.data.copy()
         if ntest == 0:
@@ -483,20 +561,37 @@ class RealDataset(Dataset):
         else:
             self.test_data = self.all_data[-ntest:]
             self.data = self.all_data[:-ntest]
-        nvalid = int(self.data.shape[0]*0.1)
+
+        nvalid = min(int(self.data.shape[0]*0.1) , 1000)
+        self.nvalid = nvalid
         self.valid_data = self.data[-nvalid:]
         self.data = self.data[:-nvalid]
 
+        n = self.data.shape[0]
+        self.data = self.data[:n]
+
         self.N, self.D = self.data.shape
+        self.valid_thresh = valid_thresh
+        self.update_data()
 
         if idx is None:
             self.idx = range(self.D)
         else:
             self.idx = idx
+        
 
-        self.valid_thresh = valid_thresh
-        if self.N < 10**4:
+        if N_train is not None:
+
+            self.N_prop = N_train*1.0 / self.N
+            ndata = N_train
+            self.data = self.data[:ndata]
+
+            nvalid = max(300, int(np.floor(self.nvalid * self.N_prop)))
+            self.valid_data = self.valid_data[:nvalid]
             self.update_data()
+        else:
+            self.N_prop = None
+
         
         self.nkde=nkde
         if nkde:
@@ -517,8 +612,11 @@ class RealDataset(Dataset):
 
     def update_data(self):
         
-        self.close_mat = euclidean_distances(self.data) > self.valid_thresh
+        if self.N < 10**4:
+            self.close_mat = euclidean_distances(self.data) > self.valid_thresh
         self.N = self.data.shape[0]
+        self.nvalid = self.valid_data.shape[0]
+        self.ntest  = self.test_data.shape[0]
 
     def valid_idx(self, idx):
 
@@ -638,7 +736,7 @@ class HepMass(RealDataset):
         self.data = np.delete(self.data, [0,6,10,14,18,22], axis=1)
         self.name="HepMass"
 
-        super(HepMass, self).__init__(*args, **kwargs)
+        super(HepMass, self).__init__(ntest = 174900, *args, **kwargs)
 
 class MiniBoone(RealDataset):
     
@@ -661,7 +759,7 @@ class Gas(RealDataset):
         self.data = np.array(np.load("data/ethylene_CO.pickle"))[:,3:]
         self.name="Gas"
         self.data = clean_data(self.data, cor=cor)
-        
+
         super(Gas, self).__init__(*args, **kwargs)
 
 class Power(RealDataset):
@@ -677,7 +775,11 @@ class Mixture(RealDataset):
     def __init__(self, p, n_clusters, seed, *args, **kwargs):
         
         self.n_clusters=n_clusters
-        cluster = AgglomerativeClustering(n_clusters=n_clusters)
+        self.seed = seed
+        gamma = 1.0/2.0 / np.median(pdist(p.data))**2
+        cluster = SpectralClustering(gamma = gamma, n_clusters=n_clusters, random_state=seed,
+                            eigen_solver="arpack",
+                            affinity="nearest_neighbors")
         y = cluster.fit_predict(p.data)
         self.ps = []
         self.props = []
@@ -702,15 +804,16 @@ class ArrayDataset(RealDataset):
 
 class RealToy(RealDataset):
 
-    def __init__(self, name, D, n=5000, rotate=False, data_args={}, *args, **kwargs):
+    def __init__(self, name, D, N=10000, rotate=False, data_args={}, *args, **kwargs):
            
         self.name = name
         name = name.title() 
         d = globals()[name](D=D, **data_args)
         self.dist = d
+        self.has_grad = d.has_grad
         
         np.random.seed(kwargs["seed"])
-        data = d.sample(n)
+        data = d.sample(N)
     
         if rotate:
 
@@ -726,6 +829,7 @@ class RealToy(RealDataset):
 
         kwargs["whiten"] = False
         kwargs["itanh"] = False
+        kwargs["permute"] =False
 
         super(RealToy, self).__init__(*args, **kwargs)
 
@@ -734,28 +838,44 @@ class RealToy(RealDataset):
         return self.dist.logpdf_multiple(self.itrans(data))
 
     def grad_multiple(self, data):
-        return self.dist.grad_multiple(self.itrans(data))
+        return self.dist.grad_multiple(self.itrans(data)).dot(self.M.T)
 
+    def itrans(self, data):
+        
+        if self.itanh:
+            data = inv_itanh(data, self.ptp, self.min, self.mean2)
+
+        if self.whiten:
+            data = inv_whiten(data, self.W, self.mean)
+            
+        data = data[:, np.argsort(self.idx)]
+
+        data = np.dot(data, self.M)
+
+        return data
+
+    def score(self, x):
+        return -0.5*np.sum(self.grad_multiple(x)**2,1)
 
 def load_data(dname, noise_std=0.0, seed=1, D=None, data_args={}, **kwargs):
     dname = dname.lower()
     if dname[0:2] == "re":
         kwargs["dequantise"] = True
-        p = RedWine(noise_std=noise_std, ntest=500, seed=seed, **kwargs)
+        p = RedWine(noise_std=noise_std, seed=seed, **kwargs)
     elif dname[0] == "w":
         kwargs["dequantise"] = True
-        p = WhiteWine(noise_std=noise_std, ntest=1000, seed=seed, **kwargs)
+        p = WhiteWine(noise_std=noise_std, seed=seed, **kwargs)
     elif dname[0] == 'p':
-        p = Parkinsons(noise_std=noise_std, ntest=1000, seed=seed, **kwargs)
+        p = Parkinsons(noise_std=noise_std, seed=seed, **kwargs)
     elif dname == 'gas':
-        p = Gas(noise_std=noise_std, ntest=1000, seed=seed, **kwargs)
+        p = Gas(noise_std=noise_std, seed=seed, **kwargs)
     elif dname[0] == 'o':
-        p = Power(noise_std=noise_std, ntest=1000, seed=seed, **kwargs)
+        p = Power(noise_std=noise_std, seed=seed, **kwargs)
     elif dname[0] == 'h':
-        p = HepMass(noise_std=noise_std, ntest=1000, seed=seed, **kwargs)
-    elif dname[0] == 'm':
-        p = MiniBoone(noise_std=noise_std, ntest=1000, seed=seed, **kwargs)
-    elif dname[0] in ['f','r', 's', 'b', 'c', 'g']:
+        p = HepMass(noise_std=noise_std, seed=seed, **kwargs)
+    elif dname[0:2] == 'mi':
+        p = MiniBoone(noise_std=noise_std, seed=seed, **kwargs)
+    elif dname[0] in ['d', 'f','r', 's', 'b', 'c', 'g', 'm', 'u']:
         assert D is not None
         p = RealToy(dname.title(), D=D, noise_std=0.0, ntest=1000, seed=seed, data_args=data_args, **kwargs)
     return p
