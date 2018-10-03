@@ -393,9 +393,12 @@ class DeepLite(object):
             self.ops["sc"] = sc
             
             dc = {"GPU": gpu_count}
+            config_args = {'device_count': dc}
             if cpu_count is not None:
                 dc['CPU'] = cpu_count
-            config = tf.ConfigProto(device_count=dc)
+                config_args['intra_op_parallelism_threads'] = cpu_count
+                config_args['inter_op_parallelism_threads'] = 1  # think this is right...
+            config = tf.ConfigProto(**config_args)
             config.gpu_options.allow_growth=True
 
             #Visualise the kernel with random initialization
