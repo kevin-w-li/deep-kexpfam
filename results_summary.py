@@ -5,7 +5,7 @@ from LiteModels import DeepLite
 import h5py as h5
 from Datasets import load_data
 
-def create_model_id(data_name, model_name, mode, n_hiddens, act_fun, n_comps, seed=None):
+def create_model_id(data_name, model_name, mode, n_hiddens, act_fun, n_comps, seed=None, patience=200):
     """
     Creates an identifier for the provided model description.
     """
@@ -29,15 +29,17 @@ def create_model_id(data_name, model_name, mode, n_hiddens, act_fun, n_comps, se
 
     id += act_fun
 
+    id += delim + "p%d" % patience
     if seed is not None:
         id += delim + "s%02d" % seed
+
 
     return id
 
 
 def load_all_models(data_name, seed, dl_args, others_args, skip_theano=False):
 
-    p = load_data(data_name, seed=seed, itanh=False, whiten=True, N=5000)
+    p = load_data(data_name, seed=seed, itanh=False, whiten=True)
 
     loglik = dict()
     models = dict()
@@ -68,7 +70,7 @@ def load_all_models(data_name, seed, dl_args, others_args, skip_theano=False):
     model_fn = "maf_models/%s/%s.pkl" % (p.name.lower(), model_fn)
     models["made"] = load(model_fn)
 
-    fn = "data/made/%s_D%02d_n%d_nn%d_nt200_p50_made_samples_s%02d.h5" % (p.name, p.D, p.noise_std*100, n_hiddens[0], seed)
+    fn = "data/made/%s_D%02d_n%d_nn%d_nt200_p200_made_samples_s%02d.h5" % (p.name, p.D, p.noise_std*100, n_hiddens[0], seed)
     if os.path.isfile(fn):
         with h5.File(fn,'r') as f:
             assert np.allclose(f["idx"].value,  p.idx)
@@ -80,7 +82,7 @@ def load_all_models(data_name, seed, dl_args, others_args, skip_theano=False):
     model_fn = "maf_models/%s/%s.pkl" % (p.name.lower(), model_fn)
     models["made_mog"] = load(model_fn)
 
-    fn = "data/mog_made/%s_D%02d_n%d_nn%d_nt200_p50_mog_made_samples_s%02d.h5" % (p.name, p.D, p.noise_std*100, n_hiddens[0], seed)
+    fn = "data/mog_made/%s_D%02d_n%d_nn%d_nt200_p200_mog_made_samples_s%02d.h5" % (p.name, p.D, p.noise_std*100, n_hiddens[0], seed)
     if os.path.isfile(fn):
         with h5.File(fn,'r') as f:
             assert np.allclose(f["idx"].value,  p.idx)
@@ -91,7 +93,7 @@ def load_all_models(data_name, seed, dl_args, others_args, skip_theano=False):
     model_fn = create_model_id(data_name, "realnvp", None, n_hiddens, "tanhrelu", n_layers, seed=seed)
     model_fn = "maf_models/%s/%s.pkl" % (p.name.lower(), model_fn)
     models["nvp"] = load(model_fn)
-    fn = "data/nvp/%s_D%02d_n%d_nn%d_nl%d_nt200_p50_nvp_samples_s%02d.h5" % (p.name, p.D, p.noise_std*100, n_hiddens[0], n_layers, seed)
+    fn = "data/nvp/%s_D%02d_n%d_nn%d_nl%d_nt200_p200_nvp_samples_s%02d.h5" % (p.name, p.D, p.noise_std*100, n_hiddens[0], n_layers, seed)
     if os.path.isfile(fn):
         with h5.File(fn,'r') as f:
             assert np.allclose(f["idx"].value,  p.idx)
@@ -102,7 +104,7 @@ def load_all_models(data_name, seed, dl_args, others_args, skip_theano=False):
     model_fn = create_model_id(data_name, "maf", mode, n_hiddens, act_fun, n_layers, seed=seed)
     model_fn = "maf_models/%s/%s.pkl" % (p.name.lower(), model_fn)
     models["maf"] = load(model_fn)
-    fn = "data/maf/%s_D%02d_n%d_nn%d_nl%d_nt200_p50_maf_samples_s%02d.h5" % (p.name, p.D, p.noise_std*100, n_hiddens[0], n_layers, seed)
+    fn = "data/maf/%s_D%02d_n%d_nn%d_nl%d_nt200_p200_maf_samples_s%02d.h5" % (p.name, p.D, p.noise_std*100, n_hiddens[0], n_layers, seed)
     if os.path.isfile(fn):
         with h5.File(fn,'r') as f:
             assert np.allclose(f["idx"].value,  p.idx)
@@ -113,7 +115,7 @@ def load_all_models(data_name, seed, dl_args, others_args, skip_theano=False):
     model_fn = create_model_id(data_name, "mog_maf", mode, n_hiddens, act_fun, [n_layers, n_comps], seed=seed)
     model_fn = "maf_models/%s/%s.pkl" % (p.name.lower(), model_fn)
     models["maf_mog"] = load(model_fn)
-    fn = "data/mog_maf/%s_D%02d_n%d_nn%d_nl%d_nt200_p50_mog_maf_samples_s%02d.h5" % (p.name, p.D, p.noise_std*100, n_hiddens[0], n_layers, seed)
+    fn = "data/mog_maf/%s_D%02d_n%d_nn%d_nl%d_nt200_p200_mog_maf_samples_s%02d.h5" % (p.name, p.D, p.noise_std*100, n_hiddens[0], n_layers, seed)
     if os.path.isfile(fn):
         with h5.File(fn,'r') as f:
             assert np.allclose(f["idx"].value,  p.idx)

@@ -26,11 +26,7 @@ data_name = None
 
 # parameters for training
 minibatch = 200
-<<<<<<< HEAD
-patience = 50
-=======
 patience = 200
->>>>>>> 34099bd1ad7807328c74d389f1c88ae95499e473
 monitor_every = 1
 weight_decay_rate = 1.0e-6
 a_made = 1.0e-3
