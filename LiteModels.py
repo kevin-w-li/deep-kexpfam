@@ -131,7 +131,7 @@ class DeepLite(object):
                     npoint=300, ntrain=100, nvalid=100, nbatch=1,points_type="opt", clip_score=False,
                     step_size=1e-3, niter=10000, patience=200, kernel_type="gaussian",
                     final_step_size = 1e-3, final_ntrain=200, final_nvalid=200, final_niter=1000,
-                    gpu_count=1, fn_ext = "", train_stage = 0, nl_type = None, add_skip=True, curve_penalty=True,
+                    gpu_count=1, cpu_count=None, fn_ext = "", train_stage = 0, nl_type = None, add_skip=True, curve_penalty=True,
                     ):
         
         self.target = target
@@ -188,11 +188,11 @@ class DeepLite(object):
         else:
             self.niter = 0
 
-        self.build_model(gpu_count, train_stage=train_stage)
+        self.build_model(gpu_count, cpu_count=cpu_count, train_stage=train_stage)
 
         self.logZ = None
         
-    def build_model(self, gpu_count=1, train_stage=0):
+    def build_model(self, gpu_count=1, cpu_count=None, train_stage=0):
         
         self.graph = tf.Graph()
         with self.graph.as_default(): 
@@ -392,7 +392,10 @@ class DeepLite(object):
             self.ops["fv"] = fv
             self.ops["sc"] = sc
             
-            config = tf.ConfigProto(device_count={"GPU":gpu_count})
+            dc = {"GPU": gpu_count}
+            if cpu_count is not None:
+                dc['CPU'] = cpu_count
+            config = tf.ConfigProto(device_count=dc)
             config.gpu_options.allow_growth=True
 
             #Visualise the kernel with random initialization
@@ -680,26 +683,26 @@ class DeepLite(object):
         final_state_vals = [0,s]+ final_state_vals
         return dict(zip(self.final_state_hist.keys(), final_state_vals))
 
-    def set_test(self, rebuild=False, gpu_count=None, train_stage=0):
+    def set_test(self, rebuild=False, gpu_count=None, cpu_count=None, train_stage=0):
 
         if rebuild:
             assert gpu_count is not None, "specify number of gpu"
             if isinstance(self.seed, int):
                 self.save()
-                self.build_model(gpu_count, train_stage=train_stage)
+                self.build_model(gpu_count, cpu_count=cpu_count, train_stage=train_stage)
                 self.load()
             else:   
                 self.save("tmp")
-                self.build_model(gpu_count, train_stage=train_stage)
+                self.build_model(gpu_count, cpu_count=cpu_count, train_stage=train_stage)
                 self.load("tmp")
             
         self.sess.run(self.ops["set_keepall"])
         
-    def set_train(self, rebuild=False, gpu_count=None):
+    def set_train(self, rebuild=False, gpu_count=None, cpu_count=None):
         if rebuild:
             assert gpu_count is not None, "specify number of gpu"
             self.save("tmp")
-            self.build_model(gpu_count)
+            self.build_model(gpu_count, cpu_count=cpu_count)
             self.load("tmp")
         self.sess.run(self.ops["set_dropout"])
         
