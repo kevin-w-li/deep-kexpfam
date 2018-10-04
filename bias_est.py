@@ -20,7 +20,7 @@ dl_args = dict(
     points_type="opt", log_lam_weights=-6, step_size=1e-2, mixture_kernel=False,
     init_log_sigma=np.linspace(0, 1, 3), base=True, niter=10000,
     ntrain=100, nvalid=100, patience=200, clip_score=False,
-    curve_penalty=True, train_stage=2, q_std=2.)
+    curve_penalty=True, train_stage=2)
 
 q_var = 4
 q_std = np.sqrt(q_var)
@@ -37,14 +37,14 @@ def run_batch_q0(m, ops, n, batch_size=10**6, pbar=None, pbar_args={}):
 
     D = m.target.D
     return np.array([
-        m.sess.run(ops, feed_dict={m.n_rand: sz})
+        m.sess.run(ops, feed_dict={m.nodes['n_rand']: sz, m.nodes['q_std']: q_std})
         for sz in (sizes if pbar is None else pbar(sizes, **pbar_args))
     ])
 
 
 def est_mean(m, n, include_var=False, **batch_kwargs):
     with m.sess.graph.as_default():
-        diffs = m.logp_logq
+        diffs = m.nodes['logr']
         ops = [tf.reduce_logsumexp(diffs)]
         if include_var:
             ops.append(tf.reduce_logsumexp(2 * diffs))
@@ -66,14 +66,14 @@ def est_mean(m, n, include_var=False, **batch_kwargs):
 
 
 def est_log_percentile(m, p, n, **batch_kwargs):
-    log_rats = run_batch_q0(m, [m.logp_logq], n, **batch_kwargs)
+    log_rats = run_batch_q0(m, [m.nodes['logr']], n, **batch_kwargs)
     assert log_rats.shape[1] == 1
     return np.percentile(log_rats, p)
 
 
 def est_cdf(m, x, n, **batch_kwargs):
     with m.sess.graph.as_default():
-        diff = m.logp_logq
+        diff = m.nodes['logr']
         le = tf.count_nonzero(diff <= x)
     ests = run_batch_q0(m, [le], n, **batch_kwargs)
     assert ests.shape[1] == 1
