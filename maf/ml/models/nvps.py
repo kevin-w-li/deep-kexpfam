@@ -290,20 +290,31 @@ class RealNVP:
 
         return lprob if log else np.exp(lprob)
 
+    def bn_info(self):
+        const = []
+        val = []
+        for bn in self.bns:
+            const.extend([bn.m, bn.v])
+            val.extend([(bn.m, bn.bm), (bn.v, bn.bv)])
+        return const, val
+
     def grad(self, x):
         if getattr(self, 'eval_grad_f', None) is None:
-            const = []
-            val = []
-            for bn in self.bns:
-                const.extend([bn.m, bn.v])
-                val.extend([(bn.m, bn.bm), (bn.v, bn.bv)])
-
+            const, val = self.bn_info()
             self.eval_grad_f = theano.function(
                 inputs=[self.input],
                 outputs=tt.grad(self.L[0], self.input, consider_constant=const),
                 givens=val)
-
         return util.grad_helper(x.astype(dtype), self.eval_grad_f, self.eval)
+
+    def aapo_score(self, x):
+        if getattr(self, 'eval_aapo_f', None) is None:
+            const, val = self.bn_info()
+            self.eval_aapo_f = theano.function(
+                inputs=[self.input],
+                outputs=util.aapo_op(self.n_inputs, self.L[0], self.input, consider_constant=const),
+                givens=val)
+        return util.aapo_helper(x.astype(dtype), self.eval_aapo_f, self.eval)
 
     def gen(self, n_samples=1, u=None):
         """

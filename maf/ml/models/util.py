@@ -18,6 +18,43 @@ def grad_helper(x, grad_f, f):
     return out
 
 
+def aapo_helper(x, aapo_f, f):
+    f_wrapped = lambda a: f(np.atleast_2d(a))
+
+    out = np.empty_like(x[:, 0])
+    for i in range(x.shape[0]):
+        out[i] = aapo_f(x[i:i+1])
+        if not np.isfinite(out[i]).all():
+            grad = nd.Gradient(f_wrapped)(x[i])
+            # can't get nd.Hessdiag to work
+            hess = nd.Hessian(f_wrapped)(x[i])
+            out[i] = np.trace(hess) + grad.dot(grad) / 2
+    return out
+
+
+def aapo_op(dim, loglik, input, consider_constant=None):
+    grad = tt.grad(loglik, input, consider_constant=consider_constant)[0]
+    lap = 0
+    for i in range(dim):
+        lap += tt.grad(grad[i], input, consider_constant=consider_constant)[0, i]
+    return lap + grad.dot(grad) / 2
+
+    # hess = tt.grad(grad[0], input, consider_constant=consider_constant)[0]
+    # return grad, hess
+
+    # hessdiag, updates = theano.scan(
+    #     lambda i, y, x: tt.grad(
+    #         y[i], x, consider_constant=consider_constant,
+    #         disconnected_inputs='ignore')[0],
+    #     sequences=tt.arange(grad.shape[0]),
+    #     non_sequences=[grad, input])
+    # assert not updates
+
+    # return grad, hessdiag
+
+    # return tt.sum(hessdiag) + grad.dot(grad) / 2
+
+
 def isposint(n):
     """
     Determines whether number n is a positive integer.
