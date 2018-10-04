@@ -132,7 +132,7 @@ class DeepLite(object):
                     step_size=1e-3, niter=10000, patience=200, kernel_type="gaussian",
                     final_step_size = 1e-3, final_ntrain=200, final_nvalid=200, final_niter=1000,
                     gpu_count=1, cpu_count=None, fn_ext = "", train_stage = 0, nl_type = None, add_skip=True, curve_penalty=True,
-                    ):
+                    q_std = 2.0):
         
         self.target = target
 
@@ -140,6 +140,7 @@ class DeepLite(object):
         self.fn_ext = fn_ext
         self.seed = seed
         self.train_stage = train_stage
+        self.q_std = q_std
         
         self.model_params = dict( nlayer          = nlayer, 
                                     nneuron        = nneuron, 
@@ -386,6 +387,17 @@ class DeepLite(object):
 
             self.min_log_pdf = -np.inf
             hv, gv, fv = kn.evaluate_hess_grad_fun(test_data, alpha=self.alpha)
+            
+            # add for lo
+            q_std = self.q_std
+            self.n_rand = tf.placeholder(dtype="int64", shape=[], name="n_rand")
+            rand_norm = tf.random_normal((self.n_rand, self.target.D), mean=0.0, stddev=q_std, dtype=FDTYPE)
+            rand_fv   = kn.evaluate_fun(rand_norm, alpha = self.alpha)
+
+            logq = (-.5 * self.target.D * np.log(2 * np.pi * q_std**2)
+                         - tf.reduce_sum(rand_norm ** 2, axis=1) / (2 * q_std**2))
+            self.logp_logq = rand_fv - logq
+
             sc         = kn.individual_score(test_data, alpha=self.alpha)[0]
             self.ops["hv"] = hv
             self.ops["gv"] = gv
@@ -607,6 +619,10 @@ class DeepLite(object):
         
         return self.state_hist
 
+    def get_logr(self, n):
+        
+        return self.sess.run(self.logp_logq, feed_dict={self.n_rand: n})
+        
     def fit_alpha(self, **kwargs):
 
         for k,v in kwargs.items():
