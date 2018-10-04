@@ -2,15 +2,18 @@
 from __future__ import division
 import os
 
+from bias_est import est_mean, load_model, RES_DIR
+
 import numpy as np
 from tqdm import tqdm
 
-from bias_est import est_mean, load_model, RES_DIR
+
+BASE_DIR = os.path.join(RES_DIR, 'norms')
 
 
 def compute_for(dset, seed, n=10**8, est_seed_offset=None,
                 gpu_count=0, cpu_count=None, batch_size=10**6, pbar=None):
-    pth = os.path.join(RES_DIR, 'norms/{}/{}.txt'.format(dset, seed))
+    pth = os.path.join(BASE_DIR, '{}/{}.txt'.format(dset, seed))
     if os.path.exists(pth):
         log_Z, n_already = np.loadtxt(pth)
         if n_already != n:
@@ -41,14 +44,20 @@ def main():
     parser.add_argument('--dsets', nargs='+')
     parser.add_argument('--seeds', nargs='+', default=range(15), type=int)
     parser.add_argument('-n', type=int, default=10**9)
+    parser.add_argument('--batch-size', type=int, default=10**6)
     parser.add_argument('--est-seed-offset', type=int, default=12)
 
     parser.add_argument('--gpu-count', default=0, type=int)
     parser.add_argument('--cpu-count', default=None, type=int)
+    parser.add_argument('--base-dir', type=os.path.abspath)
     args = parser.parse_args()
 
+    global BASE_DIR
+    if args.base_dir is not None:
+        BASE_DIR = args.base_dir
+
     kwargs = vars(args).copy()
-    del kwargs['dsets'], kwargs['seeds']
+    del kwargs['dsets'], kwargs['seeds'], kwargs['base_dir']
 
     maybe_tqdm = lambda x, **k: tqdm(x, **k) if len(x) > 1 else x
     for dset in maybe_tqdm(args.dsets):

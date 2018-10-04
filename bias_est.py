@@ -2,6 +2,9 @@
 from __future__ import division
 import os
 
+import logging
+logging.getLogger("tensorflow").setLevel(logging.ERROR)
+
 import numpy as np
 from scipy.special import logsumexp
 import tensorflow as tf
@@ -23,6 +26,7 @@ q_var = 4
 q_std = np.sqrt(q_var)
 
 RES_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.join(RES_DIR, 'bias')
 
 
 def run_batch_q0(m, ops, n, batch_size=10**6, pbar=None):
@@ -154,7 +158,7 @@ def estimate_bias(model, n_pct=10**6, n_hoeffding=10**7, hoeffding_delta=.001,
 
 def compute_for(dset, seed, gpu_count=0, cpu_count=None,
                 bias_seed_offset=None, **kwargs):
-    pth = os.path.join(RES_DIR, 'bias/{}/{}.npz'.format(dset, seed))
+    pth = os.path.join(BASE_DIR, '{}/{}.npz'.format(dset, seed))
     if os.path.exists(pth):
         return dict(**np.load(pth))
 
@@ -209,10 +213,15 @@ def main():
 
     parser.add_argument('--gpu-count', default=0, type=int)
     parser.add_argument('--cpu-count', default=None, type=int)
+    parser.add_argument('--base-dir', type=os.path.abspath)
     args = parser.parse_args()
 
+    global BASE_DIR
+    if args.base_dir is not None:
+        BASE_DIR = args.base_dir
+
     kwargs = vars(args).copy()
-    del kwargs['dsets'], kwargs['seeds']
+    del kwargs['dsets'], kwargs['seeds'], kwargs['base_dir']
 
     maybe_tqdm = lambda x, **k: tqdm(x, **k) if len(x) > 1 else x
     for dset in maybe_tqdm(args.dsets):
