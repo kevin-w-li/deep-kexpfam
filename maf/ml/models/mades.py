@@ -243,6 +243,7 @@ class GaussianMade:
         self.eval_comps_f = None
         self.eval_us_f = None
         self.eval_grad_f = None
+        self.eval_aapo_f = None
 
     def eval(self, x, log=True):
         """
@@ -263,13 +264,26 @@ class GaussianMade:
 
         return lprob if log else np.exp(lprob)
 
+    def bn_info(self):
+        return [], []
+
     def grad(self, x):
         if getattr(self, 'eval_grad_f', None) is None:
+            const, val = self.bn_info()
             self.eval_grad_f = theano.function(
                 inputs=[self.input],
-                outputs=tt.grad(self.L[0], self.input))
-
+                outputs=tt.grad(self.L[0], self.input, consider_constant=const),
+                givens=val)
         return util.grad_helper(x.astype(dtype), self.eval_grad_f, self.eval)
+
+    def aapo_score(self, x):
+        if getattr(self, 'eval_aapo_f', None) is None:
+            const, val = self.bn_info()
+            self.eval_aapo_f = theano.function(
+                inputs=[self.input],
+                outputs=util.aapo_op(self.n_inputs, self.L[0], self.input, consider_constant=const),
+                givens=val)
+        return util.aapo_helper(x.astype(dtype), self.eval_aapo_f, self.eval)
 
     def eval_comps(self, x):
         """
@@ -416,13 +430,26 @@ class MixtureOfGaussiansMade:
 
         return lprob if log else np.exp(lprob)
 
+    def bn_info(self):
+        return [], []
+
     def grad(self, x):
         if getattr(self, 'eval_grad_f', None) is None:
+            const, val = self.bn_info()
             self.eval_grad_f = theano.function(
                 inputs=[self.input],
-                outputs=tt.grad(self.L[0], self.input))
-
+                outputs=tt.grad(self.L[0], self.input, consider_constant=const),
+                givens=val)
         return util.grad_helper(x.astype(dtype), self.eval_grad_f, self.eval)
+
+    def aapo_score(self, x):
+        if getattr(self, 'eval_aapo_f', None) is None:
+            const, val = self.bn_info()
+            self.eval_aapo_f = theano.function(
+                inputs=[self.input],
+                outputs=util.aapo_op(self.n_inputs, self.L[0], self.input, consider_constant=const),
+                givens=val)
+        return util.aapo_helper(x.astype(dtype), self.eval_aapo_f, self.eval)
 
     def eval_comps(self, x):
         """
