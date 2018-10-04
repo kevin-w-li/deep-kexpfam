@@ -157,10 +157,15 @@ def estimate_bias(model, n_pct=10**6, n_hoeffding=10**7, hoeffding_delta=.001,
 
 
 def compute_for(dset, seed, gpu_count=0, cpu_count=None,
-                bias_seed_offset=None, **kwargs):
+                bias_seed_offset=None, load_only=False, **kwargs):
     pth = os.path.join(BASE_DIR, '{}/{}.npz'.format(dset, seed))
     if os.path.exists(pth):
-        return dict(**np.load(pth))
+        res = dict(**np.load(pth))
+        if 'in_progress' in res:
+            raise ValueError("in progress")
+        return res
+    if load_only:
+        raise ValueError("not computed yet and asked for load_only")
 
     if not os.path.exists(os.path.dirname(pth)):
         try:
