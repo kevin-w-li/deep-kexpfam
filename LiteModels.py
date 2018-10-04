@@ -132,7 +132,7 @@ class DeepLite(object):
                     step_size=1e-3, niter=10000, patience=200, kernel_type="gaussian",
                     final_step_size = 1e-3, final_ntrain=200, final_nvalid=200, final_niter=1000,
                     gpu_count=1, cpu_count=None, fn_ext = "", train_stage = 0, nl_type = None, add_skip=True, curve_penalty=True,
-                    q_std = 2.0):
+                    ):
         
         self.target = target
 
@@ -140,7 +140,6 @@ class DeepLite(object):
         self.fn_ext = fn_ext
         self.seed = seed
         self.train_stage = train_stage
-        self.q_std = q_std
         
         self.model_params = dict( nlayer          = nlayer, 
                                     nneuron        = nneuron, 
@@ -388,15 +387,17 @@ class DeepLite(object):
             self.min_log_pdf = -np.inf
             hv, gv, fv = kn.evaluate_hess_grad_fun(test_data, alpha=self.alpha)
             
-            # add for lo
-            q_std = self.q_std
-            self.n_rand = tf.placeholder(dtype="int64", shape=[], name="n_rand")
-            rand_norm = tf.random_normal((self.n_rand, self.target.D), mean=0.0, stddev=q_std, dtype=FDTYPE)
+            # add for logr 
+            q_std = tf.placeholder(dtype=FDTYPE, shape=[], name="q_std")
+            n_rand = tf.placeholder(dtype="int64", shape=[], name="n_rand")
+            self.nodes= dict(q_std=q_std, n_rand=n_rand)
+            rand_norm = tf.random_normal((n_rand, self.target.D), mean=0.0, stddev=q_std, dtype=FDTYPE)
             rand_fv   = kn.evaluate_fun(rand_norm, alpha = self.alpha)
-
-            logq = (-.5 * self.target.D * np.log(2 * np.pi * q_std**2)
+            logq = (-.5 * self.target.D * tf.log(2 * np.pi * q_std**2)
                          - tf.reduce_sum(rand_norm ** 2, axis=1) / (2 * q_std**2))
-            self.logp_logq = rand_fv - logq
+
+            self.nodes["logr"] = rand_fv - logq
+            self.nodes["lse_logr"] = tf.reduce_logsumexp(self.nodes["logr"])
 
             sc         = kn.individual_score(test_data, alpha=self.alpha)[0]
             self.ops["hv"] = hv
@@ -619,9 +620,9 @@ class DeepLite(object):
         
         return self.state_hist
 
-    def get_logr(self, n):
+    def get_logr(self, n, std=2.0):
         
-        return self.sess.run(self.logp_logq, feed_dict={self.n_rand: n})
+        return self.sess.run(self.nodes["logr"], feed_dict={self.nodes["n_rand"]: n, self.nodes["q_std"]: std})
         
     def fit_alpha(self, **kwargs):
 
@@ -892,6 +893,10 @@ class DeepLite(object):
 
     def estimate_normaliser(self, n=10**8, batch_size=10**5, std=2.0, budget=120, bar = True):
         
+        if n==0:
+            assert self.logZ is not None
+            return self.logZ
+
         nbatch = int(np.ceil(n*1.0/batch_size))
         
         t0 = time()
@@ -901,10 +906,9 @@ class DeepLite(object):
         else:
             iterable = range(nbatch)
         for i in iterable:
-            s = np.random.randn(batch_size, self.target.D) * std
-            logq = norm.logpdf(s, loc=0, scale=std).sum(-1)
-            logp = self.fun_multiple(s, batch_size=batch_size)
-            S = logsumexp([S, logsumexp(logp-logq)])
+            lse_logr = self.sess.run(self.nodes["lse_logr"], feed_dict={self.nodes["n_rand"]: batch_size, 
+                                                                     self.nodes["q_std"] : std})
+            S = logsumexp([S,lse_logr])
             if time()-t0>budget:
                 break
             
