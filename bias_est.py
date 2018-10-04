@@ -84,7 +84,8 @@ def est_log_percentile(m, p, n, **batch_kwargs):
     with m.sess.graph.as_default():
         log_rat = m.ops['_log_rat']
         pct = tf.contrib.distributions.percentile(log_rat, float(p))
-    ests, = run_batch_q0(m, [pct], n, **batch_kwargs)
+    ests = run_batch_q0(m, [pct], n, **batch_kwargs)
+    assert ests.shape[1] == 1
     return logsumexp(ests) - np.log(ests.shape[0])
 
 
@@ -93,7 +94,8 @@ def est_cdf(m, x, n, **batch_kwargs):
     with m.sess.graph.as_default():
         diff = m.ops['_log_rat']
         le = tf.count_nonzero(diff <= x)
-    ests, = run_batch_q0(m, [le], n, **batch_kwargs)
+    ests = run_batch_q0(m, [le], n, **batch_kwargs)
+    assert ests.shape[1] == 1
     return ests.sum() / n
 
 
@@ -115,7 +117,7 @@ def estimate_bias(model, n_pct=10**6, n_hoeffding=10**7, hoeffding_delta=.001,
     #   eps = sqrt(log(1/delta) / (2n))
     p_hat = est_cdf(model, log_s, n_hoeffding, **batch_kw)
     rho = p_hat + np.sqrt(-np.log(hoeffding_delta) / (2 * n_hoeffding))
-    assert rho < .5
+    assert rho < .5, "!!!: {}, {}".format(rho, p_hat)
 
     # estimate the variance
     log_Z_for_var, log_var_1 = est_mean(
@@ -173,7 +175,8 @@ def estimate_bias(model, n_pct=10**6, n_hoeffding=10**7, hoeffding_delta=.001,
     }
 
 
-def compute_for(dset, seed, gpu_count=0, cpu_count=None, **kwargs):
+def compute_for(dset, seed, gpu_count=0, cpu_count=None,
+                bias_seed_offset=None, **kwargs):
     pth = os.path.join(RES_DIR, 'bias/{}/{}.npz'.format(dset, seed))
     if os.path.exists(pth):
         return dict(**np.load(pth))
@@ -193,6 +196,8 @@ def compute_for(dset, seed, gpu_count=0, cpu_count=None, **kwargs):
                      **dl_args)
     model.load()
 
+    if bias_seed_offset is not None:
+        np.random.seed(seed + bias_seed_offset)
     res = estimate_bias(model, **kwargs)
     np.savez(pth, **res)
     return res
@@ -201,7 +206,7 @@ def compute_for(dset, seed, gpu_count=0, cpu_count=None, **kwargs):
 def bias_est(n_samps, bias_info):
     return (
         np.exp(bias_info['log_term1'] - np.log(n_samps))
-        + bias_info['scale'] * np.exp(n_samps * bias_info['log_base']))
+        + bias_info['term2_scale'] * np.exp(n_samps * bias_info['term2_log_base']))
 
 
 def bias_est_for(dset, seed, n_samps, **kwargs):
@@ -213,12 +218,13 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--dsets', nargs='+')
     parser.add_argument('--seeds', nargs='+', default=range(15), type=int)
-    parser.add_argument('--n-psi', type=int, default=10**7)
-    parser.add_argument('--n-var', type=int, default=10**7)
-    parser.add_argument('--n-pct', type=int, default=10**6)
-    parser.add_argument('--n-hoeffding', type=int, default=10**6)
+    parser.add_argument('--n-psi', type=int, default=10**8)
+    parser.add_argument('--n-var', type=int, default=10**8)
+    parser.add_argument('--n-pct', type=int, default=10**7)
+    parser.add_argument('--n-hoeffding', type=int, default=10**7)
     parser.add_argument('--hoeffding-delta', type=int, default=.001)
     parser.add_argument('--batch-size', type=int, default=10**6)
+    parser.add_argument('--bias-seed-offset', type=int, default=17)
 
     parser.add_argument('--gpu-count', default=0, type=int)
     parser.add_argument('--cpu-count', default=None, type=int)
