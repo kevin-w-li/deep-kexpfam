@@ -17,26 +17,12 @@ dl_args = dict(
     points_type="opt", log_lam_weights=-6, step_size=1e-2, mixture_kernel=False,
     init_log_sigma=np.linspace(0, 1, 3), base=True, niter=10000,
     ntrain=100, nvalid=100, patience=200, clip_score=False,
-    curve_penalty=True, train_stage=2)
+    curve_penalty=True, train_stage=2, q_std=2.)
 
 q_var = 4
 q_std = np.sqrt(q_var)
 
 RES_DIR = os.path.dirname(os.path.abspath(__file__))
-
-
-def ensure_ops(m):
-    if '_log_sum_rat' not in m.ops:
-        with m.sess.graph.as_default():
-            s = m.test_data
-            logp = m.ops['fv']
-            logq = (-.5 * m.target.D * np.log(2 * np.pi * q_var)
-                    - tf.reduce_sum(s ** 2, axis=1) / (2 * q_var))
-            m.ops['_log_rat'] = diff = logp - logq
-            m.ops['_log_sum_rat'] = tf.reduce_logsumexp(diff)
-            # XXX are we worried about catastrophic cancellation type stuff here?
-            # maybe we should be....
-            m.ops['_log_sum_rat_sq'] = tf.reduce_logsumexp(2 * diff)
 
 
 def run_batch_q0(m, ops, n, batch_size=10**6, pbar=None):
@@ -47,17 +33,17 @@ def run_batch_q0(m, ops, n, batch_size=10**6, pbar=None):
 
     D = m.target.D
     return np.array([
-        m.sess.run(ops, feed_dict={
-            m.test_data: np.random.normal(scale=q_std, size=(sz, D))})
+        m.sess.run(ops, feed_dict={m.n_rand: sz})
         for sz in (sizes if pbar is None else pbar(sizes))
     ])
 
 
 def est_mean(m, n, include_var=False, **batch_kwargs):
-    ensure_ops(m)
-    ops = [m.ops['_log_sum_rat']]
-    if include_var:
-        ops.append(m.ops['_log_sum_rat_sq'])
+    with m.sess.graph.as_default():
+        diffs = m.logp_logq
+        ops = [tf.reduce_logsumexp(diffs)]
+        if include_var:
+            ops.append(tf.reduce_logsumexp(2 * diffs))
 
     bits = run_batch_q0(m, ops, n, **batch_kwargs)
     log_means = logsumexp(bits, axis=0) - np.log(n)
@@ -76,21 +62,14 @@ def est_mean(m, n, include_var=False, **batch_kwargs):
 
 
 def est_log_percentile(m, p, n, **batch_kwargs):
-    # do mean of percentile on each batch, for memory efficiency + simplicity
-    # reasonable if batch_size is decently large...
-    ensure_ops(m)
-    with m.sess.graph.as_default():
-        log_rat = m.ops['_log_rat']
-        pct = tf.contrib.distributions.percentile(log_rat, float(p))
-    ests = run_batch_q0(m, [pct], n, **batch_kwargs)
-    assert ests.shape[1] == 1
-    return logsumexp(ests) - np.log(ests.shape[0])
+    log_rats = run_batch_q0(m, [m.logp_logq], n, **batch_kwargs)
+    assert log_rats.shape[1] == 1
+    return np.percentile(log_rats, p)
 
 
 def est_cdf(m, x, n, **batch_kwargs):
-    ensure_ops(m)
     with m.sess.graph.as_default():
-        diff = m.ops['_log_rat']
+        diff = m.logp_logq
         le = tf.count_nonzero(diff <= x)
     ests = run_batch_q0(m, [le], n, **batch_kwargs)
     assert ests.shape[1] == 1
