@@ -16,4 +16,4 @@ SEED=$(( $SLURM_ARRAY_TASK_ID % 15 ))
 DSET=${dsets[$(( $SLURM_ARRAY_TASK_ID / 15 ))]}
 
 cd ~/deep-kexpfam
-nice python bias_est.py --dset $DSET --seed $SEED # --cpu-count 20
+nice python norm_est.py --dset $DSET --seed $SEED -n 1000000000 # --cpu-count 20

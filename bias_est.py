@@ -1,10 +1,8 @@
 #!/usr/bin/env python
 from __future__ import division
-# import itertools
 import os
 
 import numpy as np
-# from scipy.optimize import minimize
 from scipy.special import logsumexp
 import tensorflow as tf
 from tqdm import tqdm
@@ -191,16 +189,20 @@ def compute_for(dset, seed, gpu_count=0, cpu_count=None,
                 raise
     np.savez(pth, in_progress=True)
 
-    p = load_data(dset, seed=seed, itanh=False, whiten=True)
-    model = DeepLite(p, seed=seed, gpu_count=gpu_count, cpu_count=cpu_count,
-                     **dl_args)
-    model.load()
-
+    model, p = load_model(dset, seed, gpu_count, cpu_count)
     if bias_seed_offset is not None:
         np.random.seed(seed + bias_seed_offset)
     res = estimate_bias(model, **kwargs)
     np.savez(pth, **res)
     return res
+
+def load_model(dset, seed, gpu_count=0, cpu_count=None):
+    p = load_data(dset, seed=seed, itanh=False, whiten=True)
+    model = DeepLite(p, seed=seed, gpu_count=gpu_count, cpu_count=cpu_count,
+                     **dl_args)
+    model.load()
+
+    return model, p
 
 
 def bias_est(n_samps, bias_info):
