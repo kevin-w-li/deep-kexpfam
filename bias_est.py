@@ -29,7 +29,7 @@ RES_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.join(RES_DIR, 'bias')
 
 
-def run_batch_q0(m, ops, n, batch_size=10**6, pbar=None):
+def run_batch_q0(m, ops, n, batch_size=10**6, pbar=None, pbar_args={}):
     n_batches = int(np.ceil(float(n) / batch_size))
     sizes = np.full(n_batches, batch_size)
     sizes[:n - sizes.sum()] += 1
@@ -38,7 +38,7 @@ def run_batch_q0(m, ops, n, batch_size=10**6, pbar=None):
     D = m.target.D
     return np.array([
         m.sess.run(ops, feed_dict={m.n_rand: sz})
-        for sz in (sizes if pbar is None else pbar(sizes))
+        for sz in (sizes if pbar is None else pbar(sizes, **pbar_args))
     ])
 
 
@@ -91,21 +91,21 @@ def estimate_bias(model, n_pct=10**6, n_hoeffding=10**7, hoeffding_delta=.001,
     # find the point s at the 40th percentile
     if 'batch_size' in batch_kw:
         assert batch_kw['batch_size'] >= 10**4
-    log_s = est_log_percentile(model, 40, n_pct, **batch_kw)
+    log_s = est_log_percentile(model, 40, n_pct, pbar_args=dict(desc="1. percentile"), **batch_kw)
 
     # get Hoeffding bound on cdf at s:
     #   Pr(\sum 1(X <= x) - E[1(X <= x)] > eps) <= exp(- 2 n eps^2) = delta
     #   eps = sqrt(log(1/delta) / (2n))
-    p_hat = est_cdf(model, log_s, n_hoeffding, **batch_kw)
+    p_hat = est_cdf(model, log_s, n_hoeffding, pbar_args=dict(desc="2. hoeffding"), **batch_kw)
     rho = p_hat + np.sqrt(-np.log(hoeffding_delta) / (2 * n_hoeffding))
     assert rho < .5, "!!!: {}, {}".format(rho, p_hat)
 
     # estimate the variance
     log_Z_for_var, log_var_1 = est_mean(
-        model, n_var, include_var=True, **batch_kw)
+        model, n_var, include_var=True, pbar_args=dict(desc="3. variance"), **batch_kw)
 
     # estimate of the normalizer to use in the bound
-    log_Z = est_mean(model, n_var, **batch_kw)
+    log_Z = est_mean(model, n_var, pbar_args=dict(desc="4. mean"), **batch_kw)
 
     # the total bound is:
     # psi(q, Z) = log(Z/q) + q/Z - 1
@@ -210,6 +210,7 @@ def main():
     parser.add_argument('--hoeffding-delta', type=int, default=.001)
     parser.add_argument('--batch-size', type=int, default=10**6)
     parser.add_argument('--bias-seed-offset', type=int, default=17)
+    parser.add_argument('--pbar', action='store_true', default=False)
 
     parser.add_argument('--gpu-count', default=0, type=int)
     parser.add_argument('--cpu-count', default=None, type=int)
@@ -222,6 +223,8 @@ def main():
 
     kwargs = vars(args).copy()
     del kwargs['dsets'], kwargs['seeds'], kwargs['base_dir']
+    if kwargs['pbar'] is True:
+        kwargs['pbar'] = tqdm
 
     maybe_tqdm = lambda x, **k: tqdm(x, **k) if len(x) > 1 else x
     for dset in maybe_tqdm(args.dsets):
