@@ -1,8 +1,10 @@
 scipy>=1.0
 numpy>=1.13
 matplotlib>=2.0
-tqdm
-seaborn
-pandas
+tqdm>=4.28
+seaborn>=0.9
+pandas>=0.23
 tensorflow_gpu==1.4
 jupyter>=1.0
+scikit-learn==0.20
+h5py>=2.8
