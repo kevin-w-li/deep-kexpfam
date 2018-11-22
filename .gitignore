@@ -11,3 +11,7 @@ tb_logs/*
 maf_models/*
 KCEF/*
 *.npz
+run*
+gen*
+*.sh
+exp_code/*

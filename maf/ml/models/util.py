@@ -13,8 +13,10 @@ def grad_helper(x, grad_f, f):
     out = np.empty_like(x)
     for i in range(x.shape[0]):
         out[i] = grad_f(x[i:i+1])
+        '''
         if not np.isfinite(out[i]).all():
             out[i] = nd.Gradient(lambda a: f(a[np.newaxis, :]))(x[i])
+        '''
     return out
 
 
@@ -24,11 +26,13 @@ def aapo_helper(x, aapo_f, f):
     out = np.empty_like(x[:, 0])
     for i in range(x.shape[0]):
         out[i] = aapo_f(x[i:i+1])
+        '''
         if not np.isfinite(out[i]).all():
             grad = nd.Gradient(f_wrapped)(x[i])
             # can't get nd.Hessdiag to work
             hess = nd.Hessian(f_wrapped)(x[i])
             out[i] = np.trace(hess) + grad.dot(grad) / 2
+        '''
     return out
 
 

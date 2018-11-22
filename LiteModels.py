@@ -1,12 +1,8 @@
 import numpy as np
 import tensorflow as tf
-from LiteNet import *
+from DKEF import *
 from Utils import support_1d
-'''
-from kernel_hmc.mini_mcmc.mini_mcmc import mini_mcmc
-from kernel_hmc.densities.gaussian import IsotropicZeroMeanGaussian
-from kernel_hmc.proposals.kmc import KMCStatic
-'''
+
 from tqdm import tqdm_notebook, tqdm
 from collections import OrderedDict
 import warnings
@@ -317,8 +313,7 @@ class DeepLite(object):
                             init_log_lam=init_log_lam, log_lam_weights=log_lam_weights, 
                             noise_std=noise_std, base=base, curve_penalty=curve_penalty)
 
-            loss, score, _, _, r_norm, l_norm, curve, w_norm, k_loss, test_score, \
-                self.states["outlier"], save_alpha = \
+            loss, score, r_norm, l_norm, curve, w_norm, k_loss, test_score, save_alpha = \
                 kn.val_score(train_data=train_data, valid_data=valid_data, test_data = test_data, 
                             train_kde=self.train_kde, valid_kde=self.valid_kde, clip_score=clip_score,
                             add_noise=True)
@@ -834,63 +829,6 @@ class DeepLite(object):
 
         return value
 
-    def setup_mcmc(self, sigma=1.0, num_steps_min=1, num_steps_max=10, step_size_min=0.01, step_size_max=0.1,
-                    min_log_pdf=0.0):
-
-        momentum = IsotropicZeroMeanGaussian(sigma=sigma, D=np.prod(self.target.D))
-        self.kmc = KMCStatic(self, momentum, num_steps_min, num_steps_max,
-                            step_size_min, step_size_max)
-        self.min_log_pdf = min_log_pdf
-
-    def sample(self, N, nchain=1, thin=1, burn=0):
-        
-        samples = []
-
-        assert N % nchain == 0
-
-        for i in tqdm(range(nchain), ncols=100, desc="one chain"):
-            s = self.sample_one_chain(N/nchain*thin+burn, self.target.sample(1)[0])
-            samples.append(s["samples"][burn::thin])
-
-        return np.concatenate(samples, axis=0)
-
-
-    def sample_one_chain(self, N, start):
-        assert self.kmc is not None
-
-        samples, proposals, accepted, acc_prob, log_pdf, times, step_sizes = \
-            mini_mcmc(self.kmc, start, N+1, np.prod(self.target.D))
-        
-        return dict(samples=samples, proposals=proposals, accepted=accepted, acc_prob=acc_prob,
-            log_pdf=log_pdf, times=times, step_sizes=step_sizes)
-
-    def nuts(self, N, thin=10, nchain=10, burn=1000, delta = 0.7):
-        
-        samples = []
-
-        assert N % nchain == 0
-
-        for i in tqdm(range(nchain), ncols=100, desc="one chain"):
-            s = self.nuts_one_chain(N*thin/nchain, self.target.sample(1)[0], burn, delta)
-            samples.append(s[::thin])
-
-        return np.concatenate(samples, axis=0)
-
-    def nuts_one_chain(self, nsample, theta0, Madapt, delta):
-        
-        def lnprobfn(x):
-            x = np.atleast_2d(x)
-            return self.fun_multiple(x, batch_size=1)[0]
-
-        def gradfn(x):
-            x = np.atleast_2d(x)
-            return self.grad_multiple(x, batch_size=1)[0]
-
-        sampler = NUTSSampler(self.target.D, lnprobfn, gradfn)
-        samples = sampler.run_mcmc(theta0, nsample, Madapt, delta)
-
-        return samples
-
     def estimate_normaliser(self, n=10**8, batch_size=10**5, std=2.0, budget=120, bar = True):
         
         if n==0:
@@ -917,7 +855,7 @@ class DeepLite(object):
         return self.logZ
 
     
-    def eval(self, data, batch_size = 1000, **kwargs):
+    def eval(self, data, batch_size = 100000, **kwargs):
 
         self.estimate_normaliser(**kwargs)
         
@@ -926,156 +864,4 @@ class DeepLite(object):
         logp = self.fun_multiple(data, batch_size = batch_size)
         logp -= self.logZ
         return logp
-
-
-class TrainedDeepLite(object):
-
-    def __init__(self, fn, rand_train_data, config=None, ndims = None, points_type="train", npoint=None):
-        
-
-        if config is None:
-            config = tf.ConfigProto(device_count={"GPU":0})
-            config.gpu_options.allow_growth=True
-
-        tf.reset_default_graph() 
-        param_str = fn.split("_")
-        self.D = int(param_str[1][1:])
-        self.nlayer = int(param_str[2][1:])
-        if ndims is None:
-            self.ndims   = [(int(param_str[3][2:]),)] * self.nlayer
-        else:
-            self.ndims   = ndims
-
-        if npoint is None:
-            self.npoint = int(param_str[4][2:])
-            assert points_type in ["train", "opt"]
-        else:   
-            self.npoint = npoint
-
-        self.test_data  = tf.placeholder(FDTYPE, shape=(None, self.D), name="test_data")
-        
-        if points_type == "train":
-            self.rand_train_data = rand_train_data[:self.npoint]
-            self.rand_points     = self.rand_train_data
-            self.train_data = tf.Variable(self.rand_train_data, name="train_data", dtype=FDTYPE)
-            self.points  = tf.identity(self.train_data, name="points")
-        elif points_type == "opt":
-            self.rand_train_data = rand_train_data
-            self.points     = tf.Variable(np.zeros((self.npoint, self.D)), dtype=FDTYPE, name="points")
-            self.train_data = tf.Variable(self.rand_train_data, dtype=FDTYPE, name="train_data")
-        elif points_type == "sep":
-            self.rand_train_data = rand_train_data
-            randint = np.random.randint(rand_train_data.shape[0], size=self.npoint)
-            self.rand_points  = rand_train_data[randint,:]
-            self.points     = tf.Variable(self.rand_points, dtype=FDTYPE, name="points")
-            self.train_data = tf.Variable(self.rand_train_data, dtype=FDTYPE, name="train_data")
-        else:
-            raise NameError("points_type needs to be 'train', 'opt', or 'sep'")
-            
-        
-        self.alpha   = tf.Variable(tf.zeros(self.npoint), dtype=FDTYPE, name="alpha")
-
-        kernel  = GaussianKernel(sigma=1.0)
-        if self.nlayer>0:
-
-            layer_1 = LinearSoftNetwork((self.D,), self.ndims[0], 
-                                        init_weight_std=1, scope="fc1")
-            layers = [LinearSoftNetwork(self.ndims[i], self.ndims[i+1], 
-                                        init_weight_std=1,  scope="fc"+str(i+2)) for i in range(self.nlayer-2)]
-            network = DeepNetwork([layer_1, ] + layers, ndim_out = self.ndims[-1], init_weight_std = 1, add_skip=self.nlayer>1)
-            kernel = CompositeKernel(kernel, network)
-            prop = 1/(1+tf.exp(-tf.Variable(0, dtype=FDTYPE)))
-            kernel = MixtureKernel([kernel, GaussianKernel(sigma=1.0)], [1.0-prop, prop])
-
-        self.kn = LiteModel(kernel, points=self.points, init_log_lam=0, log_lam_weights=-3, alpha=self.alpha)
-
-        self.kn.npoint = self.npoint
-        
-        self.hv, self.gv, self.fv = self.kn.evaluate_hess_grad_fun(self.test_data)
-        self.alpha_assign_op = self.kn.opt_score(data=self.train_data)
-        
-        init = tf.global_variables_initializer()
-        
-        self.sess = tf.Session(config=config)
-        self.kmc = None
-        self.sess.run(init)
-
-        ckpt = "ckpts/"+fn+".ckpt"
-
-        #saver = tf.train.Saver(allow_empty=True)
-        #saver.restore(self.sess, ckpt)
-
-        optimistic_restore(self.sess, ckpt)
-
-        self.sess.run(self.alpha_assign_op)
-            
-        self.min_log_pdf = -np.inf
-        
-    
-    def __enter__(self):
-        return self
-    
-    
-    def __exit__(self, exc_type, exc_value, traceback):
-        self.sess.close()
-
-    def grad(self, data):
-        return support_1d(lambda x: self.grad_multiple(x, batch_size=1), data)
-
-    def log_pdf(self, data):
-        return support_1d(lambda x: self.fun_multiple(x, batch_size=1), data)
-    
-    def grad_multiple(self, data, batch_size=100):
-        
-        neval = data.shape[0]
-        nbatch = neval/batch_size
-        value = np.empty((neval, self.D))
-
-        for i in range(nbatch):
-            batch = data[i*batch_size:(i+1)*batch_size]
-            value[i*batch_size:(i+1)*batch_size,:] = \
-                self.sess.run(self.gv, feed_dict={self.test_data:batch})   
-        return value
-        
-    def fun_multiple(self, data, batch_size=100):
-        
-        neval = data.shape[0]
-        nbatch = int(np.ceil(1.0*neval/batch_size))
-        value = np.array([])
-        
-        for i in range(nbatch):
-
-            batch = data[i*batch_size:(i+1)*batch_size]
-            np.append(value, self.sess.run(self.fv, feed_dict={self.test_data:batch}) )
-        value[value<self.min_log_pdf] = -np.inf
-        return value
-        
-    def hess_multiple(self, data, batch_size=100):
-        
-        neval = data.shape[0]
-        nbatch = neval/batch_size
-        value = np.empty((neval, self.D, self.D))
-
-        for i in range(nbatch):
-            batch = data[i*batch_size:(i+1)*batch_size]
-            value[i*batch_size:(i+1)*batch_size] = \
-                self.sess.run(self.hv, feed_dict={self.test_data:batch}) 
-        return value
-    
-    def retrain(self, rand_train_data):
-        
-        self.sess.run(self.alpha_assign_op, feed_dict={self.train_data:rand_train_data})
-
-    def setup_mcmc(self, sigma=1.0, num_steps_min=1, num_steps_max=10, step_size_min=0.01, step_size_max=0.1,
-                    min_log_pdf=0.0):
-        
-        momentum = IsotropicZeroMeanGaussian(sigma=sigma, D=self.D)
-        self.kmc = KMCStatic(self, momentum, num_steps_min, num_steps_max, 
-                            step_size_min, step_size_max)
-        self.min_log_pdf = min_log_pdf
-
-    def sample(self, N, start):
-        assert self.kmc is not None
-        samples, proposals, accepted, acc_prob, log_pdf, times, step_sizes = mini_mcmc(self.kmc, start, N+1, self.D)
-        return samples
 

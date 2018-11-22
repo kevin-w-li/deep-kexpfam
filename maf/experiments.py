@@ -239,11 +239,11 @@ def train_mog_made_cond(n_hiddens, act_fun, n_comps, mode):
     save_model(model, 'made_cond', mode, n_hiddens, act_fun, n_comps)
 
 
-def train_realnvp(n_hiddens, s_act, t_act, n_layers, seed=None):
+def train_realnvp(n_hiddens, s_act, t_act, n_layers, maxepochs=None, seed=None):
 
     assert is_data_loaded(), 'Dataset hasn\'t been loaded'
     model = nvps.RealNVP(data.n_dims, n_hiddens, s_act, t_act, n_layers)
-    train(model, a_flow)
+    train(model, a_flow, maxepochs=maxepochs)
     save_model(model, 'realnvp', None, n_hiddens, s_act + t_act, n_layers, seed=seed)
     return model
 
@@ -256,28 +256,28 @@ def train_realnvp_cond(n_hiddens, s_act, t_act, n_layers):
     save_model(model, 'realnvp_cond', None, n_hiddens, s_act + t_act, n_layers)
 
 
-def train_maf(n_hiddens, act_fun, n_mades, mode, seed=None):
+def train_maf(n_hiddens, act_fun, n_mades, mode, seed=None, maxepochs=None):
 
     assert is_data_loaded(), 'Dataset hasn\'t been loaded'
     model = mafs.MaskedAutoregressiveFlow(data.n_dims, n_hiddens, act_fun, n_mades, mode=mode)
-    train(model, a_flow)
+    train(model, a_flow, maxepochs=maxepochs)
     save_model(model, 'maf', mode, n_hiddens, act_fun, n_mades, seed=seed)
     return model
 
 
-def train_maf_cond(n_hiddens, act_fun, n_mades, mode):
+def train_maf_cond(n_hiddens, act_fun, n_mades, mode, maxepochs=None):
 
     assert is_data_loaded(), 'Dataset hasn\'t been loaded'
     model = mafs.ConditionalMaskedAutoregressiveFlow(data.n_labels, data.n_dims, n_hiddens, act_fun, n_mades, mode=mode)
-    train_cond(model, a_flow)
+    train_cond(model, a_flow, maxepochs=maxepochs)
     save_model(model, 'maf_cond', mode, n_hiddens, act_fun, n_mades)
 
 
-def train_maf_on_made(n_hiddens, act_fun, n_layers, n_comps, mode, seed=None):
+def train_maf_on_made(n_hiddens, act_fun, n_layers, n_comps, mode, seed=None, maxepochs=None):
 
     assert is_data_loaded(), 'Dataset hasn\'t been loaded'
     model = mafs.MaskedAutoregressiveFlow_on_MADE(data.n_dims, n_hiddens, act_fun, n_layers, n_comps, mode=mode)
-    train(model, a_flow)
+    train(model, a_flow, maxepochs=maxepochs)
     save_model(model, 'mog_maf', mode, n_hiddens, act_fun, [n_layers, n_comps], seed=seed)
     return model
 

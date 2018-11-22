@@ -1,10 +1,10 @@
 import tensorflow as tf
 from LiteNet import *
+
+
 import unittest
 import numpy as np
 import time
-
-
 
 @unittest.skip('does not work yet')
 class test_PolynomialKernel(unittest.TestCase):
@@ -100,13 +100,12 @@ class test_PolynomialKernel(unittest.TestCase):
 @unittest.skip('pass')
 class test_GaussianKernel(unittest.TestCase):
 
-
     ndim = 4
     nx = 2
     ny  = 3
 
     def setUp(self):
-        self.kernel = GaussianKernel(sigma=1000)
+        self.kernel = GaussianKernel(sigma=10)
         self.X = tf.constant(np.random.randn(self.nx, self.ndim).astype(FDTYPE))
         self.Y = tf.constant(np.random.randn(self.ny, self.ndim).astype(FDTYPE))
 
@@ -204,6 +203,51 @@ class test_GaussianKernel(unittest.TestCase):
         assert np.allclose(dk_dy, dk_dy_real)
         assert np.allclose(dk_dx, dk_dx_real)
 
+
+@unittest.skip('pass')
+class test_RationalQuadraticKernel(unittest.TestCase):
+
+    ndim = 4
+    nx = 2
+    ny  = 3
+
+    def setUp(self):
+        self.kernel = RationalQuadraticKernel(3.0,2.0)
+        self.X = tf.constant(np.random.randn(self.nx, self.ndim).astype(FDTYPE))
+        self.Y = tf.constant(np.random.randn(self.ny, self.ndim).astype(FDTYPE))
+
+        init = tf.global_variables_initializer()
+        self.sess = tf.InteractiveSession()
+        self.sess.run(init)
+
+    def test_get_grad(self):
+    
+        grad = self.kernel.get_grad(self.X, self.Y)
+        grad = grad.eval()
+
+        gram = self.kernel.get_gram_matrix(self.X, self.Y)
+        grad_real = np.empty((self.nx,self.ny, self.ndim))
+        
+        for xi in range(self.nx):
+            for yi in range(self.ny):
+                   grad_real[xi, yi] = tf.stack(tf.gradients(gram[xi, yi], self.Y)[0][yi]).eval()
+
+        assert np.allclose(grad, grad_real), np.linalg.norm(grad_real-grad)
+
+    def test_get_hess(self):
+    
+        hess = self.kernel.get_hess(self.X, self.Y)
+        hess = hess.eval()
+
+        hess_real = np.empty((self.nx,self.ny, self.ndim, self.ndim))
+        
+        for xi in range(self.nx):
+            this_x = self.X[xi]
+            for yi in range(self.ny):
+                this_y = self.Y[yi]
+                gram = self.kernel.get_gram_matrix(this_x, this_y)
+                hess_real[xi, yi] = tf.hessians(gram, this_y)[0].eval()
+        assert np.allclose(hess, hess_real), np.linalg.norm(hess_real-hess)
 
 @unittest.skip('does not work yet')
 class test_LinearNetwork(unittest.TestCase):
@@ -506,7 +550,7 @@ class test_LinearSoftNetwork(unittest.TestCase):
         self.data_tensor = tf.constant(self.data)
         
         # build network
-        self.network = LinearSoftNetwork(self.ndim_in, self.ndim_out, init_std = 1)
+        self.network = LinearSoftNetwork(self.ndim_in, self.ndim_out, init_weight_std = 1, keep_prob=1.0)
 
         self.sess = tf.InteractiveSession()
 
@@ -531,25 +575,6 @@ class test_LinearSoftNetwork(unittest.TestCase):
         out_real = self.network.forward_array(self.data)
         assert np.allclose(out, out_real, atol=1e-6), np.max(np.sqrt((out-out_real)**2))
        
-    '''
-    @unittest.skip('not required')
-    def test_get_grad_param(self):
-        grad_dict, output = self.network.get_grad_param(self.data)
-        grad_dict_true = OrderedDict.fromkeys(self.network.param)
-        output_true    = self.network.forward_array(self.data)
-        for k in grad_dict_true:
-            grad_dict_true[k] = np.zeros([self.network.ndim_out, self.ndata] + self.network.param[k].shape.dims)
-
-        for di in xrange(self.ndata):
-            for oi in xrange(self.network.ndim_out):
-                grad_dict_true['W'][oi, di, oi] = self.data[di] * (output[di,oi]>0)
-                grad_dict_true['b'][oi, di, 0, oi] = 1 * (output[di,oi]>0)
-
-        assert np.allclose(grad_dict_true['W'], grad_dict['W'])
-        assert np.allclose(grad_dict_true['b'], grad_dict['b'])
-        assert np.allclose(output_true, output)
-    '''
-
     def test_get_grad_data(self):
 
         data, single   = self.network.reshape_data_array(self.data)
@@ -558,7 +583,7 @@ class test_LinearSoftNetwork(unittest.TestCase):
         grad, _, feed = self.network.get_grad_data()
         grad_data = self.sess.run(grad, feed_dict={feed: data})
 
-        grad_real = np.empty((self.ndim_out + (self.ndata,) + self.ndim_in))
+        grad_real = []
 
         for di in range(self.data.shape[0]):
 
@@ -567,8 +592,15 @@ class test_LinearSoftNetwork(unittest.TestCase):
 
             for oi in xrange(self.ndim_out[0]):
 
-                g = tf.gradients(out[oi], this_data)[0].eval()
-                grad_real[oi, di, :] = g
+                g = tf.gradients(out[oi], this_data)[0]
+                grad_real.append(g)
+
+        grad_real = np.array(self.sess.run(grad_real))
+        grad_real = grad_real.reshape((self.ndata,) + self.ndim_out + self.ndim_in)
+
+        n = len(self.ndim_in)
+        grad_real = np.transpose(grad_real, range(1, n+1) + [0] + range(n+1, n*2+1))
+
 
         assert np.all(np.isfinite(grad_data))
         assert np.allclose(grad_data, grad_real), np.linalg.norm(grad_real-grad_data)
@@ -623,7 +655,7 @@ class test_LinearSoftNetwork(unittest.TestCase):
         assert np.allclose(hess_real, hess_data), np.linalg.norm(hess_real-hess_data)
         assert np.allclose(grad_data, grad_real)
 
-#@unittest.skip('not required')
+@unittest.skip('not required')
 class test_DenseLinearSoftNetwork(unittest.TestCase):
     
     ndim_in = [(3,), (3,)]
@@ -638,7 +670,7 @@ class test_DenseLinearSoftNetwork(unittest.TestCase):
         self.data_tensor = [tf.constant(self.data[i]) for i in range(self.nin)]
         
         # build network
-        self.network = DenseLinearSoftNetwork(self.ndim_in, self.ndim_out, init_std = 1)
+        self.network = DenseLinearSoftNetwork(self.ndim_in, self.ndim_out, init_weight_std = 1)
 
         self.sess = tf.InteractiveSession()
 
@@ -763,9 +795,9 @@ class test_DeepNetwork(unittest.TestCase):
         
         # build network
         self.ndim_out = (2,)
-        layer_1 = LinearSoftNetwork(self.ndim_in, self.ndim_2, init_std = 1)
-        layer_2 = LinearSoftNetwork(self.ndim_2, self.ndim_3, init_std = 1)
-        layer_3 = LinearSoftNetwork(self.ndim_3, self.ndim_out, init_std = 1)
+        layer_1 = LinearSoftNetwork(self.ndim_in, self.ndim_2, init_weight_std = 1)
+        layer_2 = LinearSoftNetwork(self.ndim_2, self.ndim_3, init_weight_std = 1)
+        layer_3 = LinearSoftNetwork(self.ndim_3, self.ndim_out, init_weight_std = 1)
 
         self.network = DeepNetwork([layer_1], ndim_out = (2,), add_skip=False)
         self.ndim_out = self.network.ndim_out
@@ -798,7 +830,6 @@ class test_DeepNetwork(unittest.TestCase):
 
         grad, _, feed = self.network.get_grad_data()
         grad_data = self.sess.run(grad, feed_dict={feed: self.data})
-        print self.data.shape
 
         grad_real = np.empty((self.ndim_out + (self.ndata,) + self.ndim_in))
 
@@ -854,13 +885,100 @@ class test_DeepNetwork(unittest.TestCase):
         assert np.allclose(hess_real, hess_data, atol=1e-6, rtol=1e-4), np.linalg.norm(hess_real-hess_data)/np.linalg.norm(hess_real)
 
 
+@unittest.skip('not required')
+class test_DropoutNetwork(unittest.TestCase):
+    
+    ndim_in = (3,)
+    ndata  = 2
+
+    def setUp(self):
+        
+        # fake data and points
+        self.data =   np.random.randn(self.ndata, *self.ndim_in).astype(FDTYPE)*10
+        self.data_tensor = tf.constant(self.data)
+        self.ndim_out = self.ndim_in
+        
+        # build network
+        self.network = DropoutNetwork(self.ndim_in, p=0.4, mode="test")
+
+        self.sess = tf.InteractiveSession()
+
+        init = tf.global_variables_initializer()
+
+        self.sess.run(init)
+
+
+    def test_forward_tensor(self):
+
+        out = self.network.forward_tensor(self.data_tensor)
+        mask, out = self.sess.run([self.network.mask, out])
+        out_real = self.network.forward_array(self.data, mask = mask)
+        assert np.allclose(out, out_real, atol=1e-6), np.max(np.sqrt((out-out_real)**2))
+       
+    def test_get_grad_data(self):
+
+        data, single   = self.network.reshape_data_array(self.data)
+        ninput = data.shape[0]
+
+        grad, _, feed = self.network.get_grad_data()
+        grad_data, mask = self.sess.run([grad, self.network.mask], feed_dict={feed: data})
+
+        grad_real = []
+
+        for di in range(self.data.shape[0]):
+
+            this_data = self.data_tensor[di]
+            out = self.network.forward_tensor(this_data, mask=mask[di:di+1])
+
+            for oi in xrange(self.ndim_out[0]):
+                
+                g = tf.gradients(out[oi], this_data)[0]
+                grad_real.append(g)
+
+        grad_real = np.array(self.sess.run(grad_real))
+        grad_real = grad_real.reshape((self.ndata,) + self.ndim_out + self.ndim_in)
+
+        n = len(self.ndim_in)
+        grad_real = np.transpose(grad_real, range(1, n+1) + [0] + range(n+1, n*2+1))
+
+        assert np.all(np.isfinite(grad_data))
+        assert np.allclose(grad_data, grad_real), np.linalg.norm(grad_real-grad_data)
+
+    def test_get_hess_grad_data(self):
+
+        data, single   = self.network.reshape_data_array(self.data)
+        ninput = data.shape[0]
+
+        # number of batches
+
+        hess, grad, _, feed = self.network.get_hess_grad_data()
+        hess_data = self.sess.run(hess, feed_dict={feed: data})
+
+        grad_data = self.sess.run(grad, feed_dict={feed: data})
+        grad, _, feed = self.network.get_grad_data()
+        grad_real = self.sess.run(grad, feed_dict={feed: data})
+        
+
+        hess_real = np.empty((self.ndim_out + (self.ndata,) + self.ndim_in*2))
+        for oi in range(self.network.ndim_out[0]):
+            for di in range(self.data.shape[0]):
+
+                this_data = self.data_tensor[di]
+                out = self.network.forward_tensor(this_data)[oi,...]
+                hess_real[oi, di, :, :] = 0
+
+        assert np.all(np.isfinite(hess_data))
+        assert hess_real.ndim == hess_data.ndim
+        assert np.allclose(hess_real, hess_data), np.linalg.norm(hess_real-hess_data)
+        assert np.allclose(grad_data, grad_real)
+
 #@unittest.skip('not required')
 class test_LiteModel(unittest.TestCase):
 
     ndata  = 2
-    ndim_in = (5,)
-    npoint = 5
-    ndim_out = (5,)
+    ndim_in = (3,)
+    npoint = 3
+    ndim_out = (3,)
 
     def setUp(self):
         
@@ -875,10 +993,10 @@ class test_LiteModel(unittest.TestCase):
         self.points_tensor  =   tf.constant(self.points)
 
         # setup lite model with fake alpha and points
-        kernel  = GaussianKernel(1.0)
-        network_1 = LinearSoftNetwork(self.ndim_in, self.ndim_out, init_std  = 1.0)
-        network_2 = LinearSoftNetwork(self.ndim_out, self.ndim_out, init_std = 1.0)
-        network_3 = LinearSoftNetwork(self.ndim_out, self.ndim_out, init_std = 1.0)
+        kernel    = GaussianKernel(1.0)
+        network_1 = LinearSoftNetwork(self.ndim_in, self.ndim_out, init_weight_std  = 1.0)
+        network_2 = LinearSoftNetwork(self.ndim_out, self.ndim_out, init_weight_std = 1.0)
+        network_3 = LinearSoftNetwork(self.ndim_out, self.ndim_out, init_weight_std = 1.0)
         network   = DeepNetwork([network_1, network_2], ndim_out = self.ndim_out, add_skip=True)
         #kernel    = NetworkKernel(network)
         kernel  =   CompositeKernel(kernel, network)
@@ -886,8 +1004,7 @@ class test_LiteModel(unittest.TestCase):
 
         alpha   = tf.Variable( np.random.randn(self.npoint).astype(FDTYPE))
 
-        self.model = LiteModel(kernel, alpha=alpha, init_log_lam=0.0)
-        self.model.set_points( self.points_tensor )
+        self.model = LiteModel(kernel, self.npoint, alpha=alpha, init_log_lam=-100, points = self.points_tensor, base=True)
  
         # compute and store the features 
         init = tf.global_variables_initializer()
@@ -898,13 +1015,15 @@ class test_LiteModel(unittest.TestCase):
     def test_val_score(self):
 
         train_data = tf.placeholder(FDTYPE, shape = (None,) + self.ndim_in)
-        val_data = tf.placeholder(FDTYPE, shape = (None,) + self.ndim_in)
-        score, train_data, val_data = self.model.val_score(train_data=train_data, val_data=val_data)[1:4]
+        valid_data = tf.placeholder(FDTYPE, shape = (None,) + self.ndim_in)
+        r = self.model.val_score(train_data=train_data, valid_data=valid_data)
+        score = r[1]
+        save_alpha = r[-1]
 
         feed_dict = { train_data   : self.data,
-                      val_data: self.data_val}
+                      valid_data: self.data_val}
 
-        score = self.sess.run(score, feed_dict=feed_dict)
+        score, _ = self.sess.run([score, save_alpha], feed_dict=feed_dict)
         
         score_real = 0.0
 
@@ -924,9 +1043,8 @@ class test_LiteModel(unittest.TestCase):
 
     def test_score(self):
 
-        score, train_data, val_data = self.model.val_score()[1:4]
-        feed_dict = { train_data   : self.data,
-                      val_data: self.data}
+        score, H, G2, H2, GqG, qG2, qH, HqH, qH2, data = self.model.score()
+        feed_dict = { data   : self.data}
         score = self.sess.run(score, feed_dict=feed_dict)
         
         score_real = 0.0
@@ -940,15 +1058,34 @@ class test_LiteModel(unittest.TestCase):
 
         for yi in range(self.ndata):
             score_real += one_data_score.eval({
-                                  train_data: self.data,
                                   this_data: self.data[yi:yi+1]})
         score_real/=self.ndata
         assert np.allclose(score, score_real, atol=1e-6, rtol=1e-4), (score, score_real)
 
+    def test_curve(self,):
+        curve, data = self.model.curve()
+        feed_dict = { data   : self.data}
+        curve = self.sess.run(curve, feed_dict=feed_dict)
+        
+        curve_real = 0.0
+
+        this_data_flat = tf.placeholder(FDTYPE, np.prod(self.ndim_in))
+        this_data      = tf.reshape(this_data_flat, (1,)+self.ndim_in)
+
+        f = self.model.evaluate_fun(this_data)
+        one_data_curve = tf.reduce_sum(tf.square(tf.matrix_diag_part(tf.hessians(f, this_data_flat)[0]))) * 0.5
+
+        for yi in range(self.ndata):
+            curve_real += one_data_curve.eval({
+                                  this_data: self.data[yi:yi+1]})
+        curve_real/=self.ndata
+        assert np.allclose(curve, curve_real, atol=1e-6, rtol=1e-4), (curve, curve_real)
+
+
     def test_opt_score(self):
         
         # build assign operator
-        alpha_assign_opt, loss, score, data = self.model.opt_score()[:4]
+        alpha_assign_opt, score, data = self.model.opt_score()[:3]
 
         initial_score_value = \
                 self.sess.run(score, feed_dict={data: self.data})
@@ -964,7 +1101,7 @@ class test_LiteModel(unittest.TestCase):
         for i in range(10):
             self.sess.run(assign_op)
             score_value = self.sess.run(score, feed_dict={data : self.data})
-            assert opt_score_value<=score_value
+            assert opt_score_value<=score_value, opt_score_value-score_value
 
     def test_evaluate_grad(self):
         
