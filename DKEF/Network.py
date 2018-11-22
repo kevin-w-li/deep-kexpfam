@@ -361,9 +361,9 @@ class LinearSoftNetwork(Network):
 
         W = param['W']
         b = param['b']
-        out = tf.matmul(data, W,  transpose_b = True)
-        out += b
-        out = self.nl(out)
+        lin_out = tf.matmul(data, W,  transpose_b = True)
+        lin_out += b
+        out = self.nl(lin_out)
 
         grad = self.dnl(lin_out)[:,:,None] * W[None,:,:]
         grad = tf.transpose(grad, [1,0,2])

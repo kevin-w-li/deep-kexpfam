@@ -1,5 +1,8 @@
 import tensorflow as tf
-from LiteNet import *
+from DKEF.Kernel import *
+from DKEF.Network import *
+from DKEF.BaseMeasure import *
+from DKEF.Model import *
 
 
 import unittest
@@ -973,7 +976,7 @@ class test_DropoutNetwork(unittest.TestCase):
         assert np.allclose(grad_data, grad_real)
 
 #@unittest.skip('not required')
-class test_LiteModel(unittest.TestCase):
+class test_Model(unittest.TestCase):
 
     ndata  = 2
     ndim_in = (3,)
@@ -1004,7 +1007,7 @@ class test_LiteModel(unittest.TestCase):
 
         alpha   = tf.Variable( np.random.randn(self.npoint).astype(FDTYPE))
 
-        self.model = LiteModel(kernel, self.npoint, alpha=alpha, init_log_lam=-100, points = self.points_tensor, base=True)
+        self.model = Model(kernel, self.npoint, alpha=alpha, init_log_lam=-100, points = self.points_tensor, base=True)
  
         # compute and store the features 
         init = tf.global_variables_initializer()
@@ -1043,7 +1046,8 @@ class test_LiteModel(unittest.TestCase):
 
     def test_score(self):
 
-        score, H, G2, H2, GqG, qG2, qH, HqH, qH2, data = self.model.score()
+        data = tf.placeholder(FDTYPE, shape = (None,) + self.ndim_in)
+        score, H, G2, H2, GqG, qG2, qH, HqH, qH2 = self.model.score(data)
         feed_dict = { data   : self.data}
         score = self.sess.run(score, feed_dict=feed_dict)
         
@@ -1084,8 +1088,9 @@ class test_LiteModel(unittest.TestCase):
 
     def test_opt_score(self):
         
-        # build assign operator
-        alpha_assign_opt, score, data = self.model.opt_score()[:3]
+        # build assign operator_
+        data = tf.placeholder(FDTYPE, shape = (None,) + self.ndim_in)
+        alpha_assign_opt, score = self.model.opt_score(data)
 
         initial_score_value = \
                 self.sess.run(score, feed_dict={data: self.data})

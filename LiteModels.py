@@ -6,11 +6,8 @@ from Utils import support_1d
 from tqdm import tqdm_notebook, tqdm
 from collections import OrderedDict
 import warnings
-from scipy.stats import norm
 from scipy.misc import logsumexp
 from sklearn.cluster import KMeans
-from nuts.emcee_nuts import NUTSSampler
-from tensorflow.contrib.opt import ScipyOptimizerInterface
 
 from sklearn.neighbors import KernelDensity
 from sklearn.model_selection import GridSearchCV
@@ -309,7 +306,7 @@ class DeepLite(object):
             kernel    = MixtureKernel( kernels, props )
 
             self.alpha   = tf.Variable(tf.zeros(npoint), dtype=FDTYPE, name="alpha_eval", trainable=False)
-            kn = LiteModel(kernel, npoint, points=points, alpha=self.alpha,
+            kn = Model(kernel, npoint, points=points, alpha=self.alpha,
                             init_log_lam=init_log_lam, log_lam_weights=log_lam_weights, 
                             noise_std=noise_std, base=base, curve_penalty=curve_penalty)
 
@@ -374,9 +371,6 @@ class DeepLite(object):
                 raw_gradients, variables = zip(*final_optimizer.compute_gradients(final_score, var_list = lambdas))
                 gradients, self.final_states["grad_norm"] = tf.clip_by_global_norm(raw_gradients, 100.0)
                 self.ops["train_lambdas_B"]  = [final_optimizer.apply_gradients(zip(gradients, variables)), save_alpha]
-                self.ops["train_lambdas_CG"] = ScipyOptimizerInterface(final_score, var_list = lambdas,
-                                                        method="CG")
-               
                 self.ops["assign_alpha"]  = [tf.assign(self.alpha, alpha), alpha]
 
             self.min_log_pdf = -np.inf
@@ -559,7 +553,7 @@ class DeepLite(object):
         last_epoch = 0
         best_score = np.inf
         wait_window = 0
-        with tqdm(range(niter+1), ncols=100, desc="trainining kernel", postfix=[dict(loss="%.3f" % 0.0, test="%.3f" % 0.0)]) as tr:    
+        with tqdm(range(niter+1), ncols=100, desc="%20s"%"trainining kernel", postfix=[dict(loss="%.3f" % 0.0, test="%.3f" % 0.0)]) as tr:    
 
             for i in tr: 
 
@@ -634,7 +628,7 @@ class DeepLite(object):
         nbatch = int(np.ceil(self.target.N * 1.0 / final_ntrain))
         
         self.sess.run(self.ops["zero_quad_lin"])
-        for i in tqdm(range(nbatch), ncols=100, desc="accumulating stats"):
+        for i in tqdm(range(nbatch), ncols=100, desc="%20s"%"accumulating stats"):
             data = self.target.data[i*final_ntrain:(i+1)*final_ntrain]
             self.sess.run(self.ops["acc_quad_lin"], feed_dict={self.train_data:data, 
                                                                n_acc_quad_lin:self.target.N})
@@ -643,7 +637,7 @@ class DeepLite(object):
         lam_names = [k for k in self.states.keys() if "lam" in k ]
         lambdas = [ self.states[ln] for ln in lam_names ]
 
-        for i in tqdm(range(final_niter), ncols=100, desc="fitting lambda"):
+        for i in tqdm(range(final_niter), ncols=100, desc="%20s"%"fitting lambda"):
             pointer += final_nvalid
             if pointer >= self.target.nvalid:
                 pointer = 0
@@ -666,37 +660,6 @@ class DeepLite(object):
         self.sess.run(self.ops["assign_alpha"])
         self.save()
         return self.final_state_hist
-
-    def fit_alpha_CG(self, **kwargs):
-
-        for k,v in kwargs.items():
-            if k in self.train_params:
-                self.train_params[k] = v
-        
-        feed = {}
-        
-        final_ntrain = self.train_params["final_ntrain"]
-        final_nvalid  = self.train_params["final_nvalid"]
-        final_niter  = self.train_params["final_niter"]
-        nbatch = int(np.ceil(self.target.N * 1.0 / final_ntrain))
-
-        for i in tqdm(range(nbatch), ncols=100, desc="accumulating stats"):
-            data = self.target.data[i*final_ntrain:(i+1)*final_ntrain]
-            self.sess.run(self.ops["acc_quad_lin"], feed_dict={self.train_data:data})
-    
-        self.ops["train_lambdas_CG"].minimize(self.sess, feed_dict={self.valid_data : self.target.valid_data})
-        self.sess.run(self.ops["assign_alpha"])
-
-        final_state_vals = self.sess.run(self.final_states.values()[2:])
-        nbatch = int(np.ceil(1.0*self.target.nvalid/final_nvalid))
-        s = 0
-        for i in range(nbatch):
-            d = self.target.valid_data[i*final_nvalid:(i+1)*final_nvalid]
-            feed[self.valid_data] = d
-            s += self.sess.run(self.final_states["score"], feed_dict=feed) * d.shape[0] / self.target.nvalid
-
-        final_state_vals = [0,s]+ final_state_vals
-        return dict(zip(self.final_state_hist.keys(), final_state_vals))
 
     def set_test(self, rebuild=False, gpu_count=None, cpu_count=None, train_stage=0):
 

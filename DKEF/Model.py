@@ -8,7 +8,7 @@ from Kernel import *
 config = tf.ConfigProto()
 config.gpu_options.allow_growth=True
 
-class LiteModel:
+class Model:
 
 
     def __init__(self, kernel, npoint, alpha = None, points = None, 
