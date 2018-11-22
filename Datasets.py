@@ -1,7 +1,7 @@
-import autograd.numpy as np
+import numpy as np
 from scipy.special import logsumexp
 from scipy.integrate import quad
-from autograd.scipy.stats import norm
+from scipy.stats import norm
 from multiprocessing import Pool
 from nystrom_kexpfam.density import rings_log_pdf_grad, rings_sample, rings_log_pdf
 from nystrom_kexpfam.data_generators.Gaussian import GaussianGrid
@@ -11,7 +11,6 @@ from scipy.spatial.distance import pdist
 import h5py as h5
 from scipy.stats import truncnorm as tnorm
 from scipy.linalg import expm
-from autograd import elementwise_grad
 
 from sklearn.neighbors import KernelDensity
 from sklearn.model_selection import GridSearchCV
@@ -111,34 +110,6 @@ class ToyDataset(Dataset):
 
     def score(self, x):
         return -0.5*self.grad_multiple(x**2,1)
-
-class Door(ToyDataset):
-    def __init__(self, width=2.0, D=2, h_min = 0.5, h_rate = 2.0):
-        
-        self.width = width
-        self.D = D
-        self.h_min = h_min
-        self.h_rate = h_rate
-        self.has_grad = True
-        self.name = "door"
-
-    def sample(self, N):
-        s = np.zeros((N, 2))
-        s[:,0] = np.random.randn(N)*self.width
-        s[:,1] = (self.h_rate * np.cos(0.7*s[:,0])**2 + self.h_min) * np.random.randn(N) 
-        return s
-
-    def logpdf_multiple(self, x):
-        
-        logpdf  = norm.logpdf(x[:,0], 0, self.width)
-        logpdf += norm.logpdf(x[:,1], 0, (self.h_rate * np.cos(0.7*x[:,0])**2  + self.h_min))
-        return logpdf
-
-    def grad_multiple(self, x):
-        
-        g = elementwise_grad(self.logpdf_multiple)
-        return g(x)
-
 
 class Spiral(ToyDataset):
     
