@@ -9,6 +9,7 @@ results/*
 .ipynb_checkpoints/*
 tb_logs/*
 maf_models/*
+maf/*
 KCEF/*
 *.npz
 run*
