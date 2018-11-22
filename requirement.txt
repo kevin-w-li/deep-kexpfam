@@ -5,3 +5,4 @@ tqdm
 seaborn
 pandas
 tensorflow_gpu==1.4
+jupyter>=1.0
