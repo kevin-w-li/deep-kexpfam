@@ -313,7 +313,7 @@ class DeepLite(object):
             loss, score, r_norm, l_norm, curve, w_norm, k_loss, test_score, save_alpha = \
                 kn.val_score(train_data=train_data, valid_data=valid_data, test_data = test_data, 
                             train_kde=self.train_kde, valid_kde=self.valid_kde, clip_score=clip_score,
-                            add_noise=True)
+             add_noise=True)
 
 
             if train_stage <=0 :
@@ -424,16 +424,16 @@ class DeepLite(object):
             self.states["loss"]    = loss
             self.states["sigmas"]   = sigmas
             self.states["props"]    = props
-            self.states["r_norm"]  = r_norm
+            #self.states["r_norm"]  = r_norm
             self.states["l_norm"]  = l_norm
             self.states["curve"]   = curve
             self.states["w_norm"]  = w_norm
-            self.states["k_loss"]  = k_loss
+            #self.states["k_loss"]  = k_loss
 
-            self.states["lam_norm"]     = self.kn.lam_norm
+            #self.states["lam_norm"]     = self.kn.lam_norm
             self.states["lam_curve"]    = self.kn.lam_curve
             self.states["lam_alpha"]    = self.kn.lam_alpha
-            self.states["lam_kde"]      = self.kn.lam_kde
+            #self.states["lam_kde"]      = self.kn.lam_kde
             self.states["test_score"]   = test_score
 
             for k in self.states:
@@ -443,10 +443,10 @@ class DeepLite(object):
             
             if train_stage<=1:
                 self.final_states["score"] = final_score
-                self.final_states["lam_norm"]     = self.kn.lam_norm
+                #self.final_states["lam_norm"]     = self.kn.lam_norm
                 self.final_states["lam_curve"]    = self.kn.lam_curve
                 self.final_states["lam_alpha"]    = self.kn.lam_alpha
-                self.final_states["lam_kde"]      = self.kn.lam_kde
+                #self.final_states["lam_kde"]      = self.kn.lam_kde
 
                 self.final_states["sigmas"]   = sigmas
                 self.final_states["props"]    = props
@@ -454,7 +454,7 @@ class DeepLite(object):
                 self.final_states["l_norm"]  = l_norm
                 self.final_states["curve"]   = curve
                 self.final_states["w_norm"]  = w_norm
-                self.final_states["k_loss"]  = k_loss
+                #self.final_states["k_loss"]  = k_loss
             for k in self.final_states:
                 if k not in self.final_state_hist:
                     self.final_state_hist[k] = []

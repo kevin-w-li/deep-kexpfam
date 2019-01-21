@@ -26,5 +26,5 @@ def pow_10(x, name, **kwargs):
 
     var = tf.Variable(x, dtype=FDTYPE, name="log_" + name, **kwargs)
 
-    return tf.pow(10.0, var, name=name)
+    return tf.pow(tf.constant(10.0, dtype=FDTYPE), var, name=name)
 
