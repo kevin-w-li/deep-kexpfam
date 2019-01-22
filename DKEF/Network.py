@@ -440,7 +440,7 @@ class DenseLinearSoftNetwork(Network):
 
         if nl_type == "linear":
             self.nl = lambda x: x
-            self.dnl = lambda x: tf.zeros_like(x)
+            self.dnl = lambda x: tf.ones_like(x)
             self.d2nl= lambda x: tf.zeros_like(x)
         else:
             self.nl = nl
