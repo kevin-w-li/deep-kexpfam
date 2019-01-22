@@ -378,7 +378,7 @@ class DeepLite(object):
             
             # add for logr 
             q_std = tf.placeholder(dtype=FDTYPE, shape=[], name="q_std")
-            n_rand = tf.placeholder(dtype="int64", shape=[], name="n_rand")
+            n_rand = tf.placeholder(dtype="int32", shape=[], name="n_rand")
             self.nodes= dict(q_std=q_std, n_rand=n_rand)
             rand_norm = tf.random_normal((n_rand, self.target.D), mean=0.0, stddev=q_std, dtype=FDTYPE)
             rand_fv   = kn.evaluate_fun(rand_norm, alpha = self.alpha)
@@ -387,6 +387,12 @@ class DeepLite(object):
 
             self.nodes["logr"] = rand_fv - logq
             self.nodes["lse_logr"] = tf.reduce_logsumexp(self.nodes["logr"])
+
+            q_sample, q_logq = kn.base.measures[0].sample_logq(n_rand)
+            q_rand_fv = kn.evaluate_fun(q_sample, alpha=self.alpha)
+
+            self.nodes["q_logr"] = q_rand_fv - q_logq
+            self.nodes["q_lse_logr"] = tf.reduce_logsumexp(self.nodes["q_logr"])
 
             sc         = kn.individual_score(test_data, alpha=self.alpha)[0]
             self.ops["hv"] = hv
@@ -612,6 +618,10 @@ class DeepLite(object):
     def get_logr(self, n, std=2.0):
         
         return self.sess.run(self.nodes["logr"], feed_dict={self.nodes["n_rand"]: n, self.nodes["q_std"]: std})
+
+    def get_q_logr(self, n):
+        
+        return self.sess.run(self.nodes["q_logr"], feed_dict={self.nodes["n_rand"]: n})
         
     def fit_alpha(self, **kwargs):
 
@@ -686,7 +696,7 @@ class DeepLite(object):
         
     def default_file_name(self):
 
-        file_name = "%s_D%02d_l%d_nd%d_np%d_nt%d_nv%d_pt%s_ss%d_ni%d_n%02d_k%d_m%d_b%d_p%d_nk%d_cl%d_cu%d_q1" % \
+        file_name = "%s_D%02d_l%d_nd%d_np%d_nt%d_nv%d_pt%s_ss%d_ni%d_n%02d_k%d_m%d_b%d_p%d_nk%d_cl%d_cu%d" % \
             (self.target.name[0], self.target.D, self.model_params["nlayer"], 
              np.prod(self.model_params["ndims"][0]), 
              self.model_params["npoint"], self.train_params["ntrain"], 
@@ -809,6 +819,30 @@ class DeepLite(object):
         for i in iterable:
             lse_logr = self.sess.run(self.nodes["lse_logr"], feed_dict={self.nodes["n_rand"]: batch_size, 
                                                                      self.nodes["q_std"] : std})
+            S = logsumexp([S,lse_logr])
+            if time()-t0>budget:
+                break
+            
+        self.logZ = S - np.log((i+1)*batch_size)
+        self.Z = np.exp(self.logZ)
+        return self.logZ
+
+    def q_estimate_normaliser(self, n=10**8, batch_size=10**3, budget=120, bar = True):
+        
+        if n==0:
+            assert self.logZ is not None
+            return self.logZ
+
+        nbatch = int(np.ceil(n*1.0/batch_size))
+        
+        t0 = time()
+        S = -np.inf
+        if bar:
+            iterable = tqdm(range(nbatch), ncols=100, desc="estimating logZ")
+        else:
+            iterable = range(nbatch)
+        for i in iterable:
+            lse_logr = self.sess.run(self.nodes["q_lse_logr"], feed_dict={self.nodes["n_rand"]: batch_size})
             S = logsumexp([S,lse_logr])
             if time()-t0>budget:
                 break

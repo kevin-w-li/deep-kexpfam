@@ -88,6 +88,24 @@ class GaussianBase(BaseMeasureBase):
         h = tf.matrix_diag(s)
         return h, g
 
+    def sample_logq(self, n):
+        
+        # https://sccn.ucsd.edu/wiki/Generalized_Gaussian_Probability_Density_Function#Generating_Random_Samples
+        # their beta is our gamma
+        # their rho is our beta
+
+        beta = (1./(2*self.sigma**2))**(2./self.beta)
+        rho   = self.beta
+        s = tf.abs(tf.random_gamma([n], 1.0/rho)) ** (1.0 / rho)
+        s = s * (tf.floor( tf.random_uniform([n, self.D]) + 0.5) * 2 - 1)
+        s = self.mu + 1. / tf.sqrt(beta) * s
+        
+        print s
+
+        logq  = 0.5 * tf.log(beta) - tf.log(2.0) - tf.lgamma ( 1 + 1. / rho ) - beta ** (rho/2) * tf.abs(s-self.mu)**rho
+        logq  = tf.reduce_sum(logq, -1)
+        return s, logq
+
 class DeepBase(BaseMeasureBase):
     
     def __init__(self, Ds, init_weight_std):

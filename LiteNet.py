@@ -457,12 +457,14 @@ class BaseMeasure(object):
        
 class GaussianBase(BaseMeasure):
     
-    def __init__(self, D, sigma=2.0, trainable=True):
-
+    def __init__(self, D, sigma=2.0, beta = 2.0, trainable=True):
+        
+        assert beta >= 1.0
         with tf.name_scope("GaussianBase"):
             self.mu    = tf.Variable([0]*D, dtype=FDTYPE, name="mu", trainable=trainable) 
             self.sigma = tf.Variable([sigma]*D,  dtype=FDTYPE, name="sigma", trainable=trainable)
-            self.beta  = tf.exp(tf.Variable([0]*D, dtype=FDTYPE, name="beta", trainable=trainable)) + 1
+            self.beta  = tf.exp(tf.Variable([0]*D, dtype=FDTYPE, name="beta", trainable=trainable)) + beta - 1.0
+        self.D = D
 
     def get_fun(self, data):
         
@@ -529,6 +531,25 @@ class GaussianBase(BaseMeasure):
         s = - self.beta * (self.beta-1) * tf.abs(d) ** (self.beta-2) / sigma2 / 2.0
         h = tf.matrix_diag(s)
         return h, g
+
+    def sample_logq(self, n):
+        
+        # https://sccn.ucsd.edu/wiki/Generalized_Gaussian_Probability_Density_Function#Generating_Random_Samples
+        # their beta is our gamma
+        # their rho is our beta
+
+        beta = (1./(2*self.sigma**2))**(2./self.beta)
+        rho   = self.beta
+        s = tf.abs(tf.random_gamma([n], 1.0/rho)) ** (1.0 / rho)
+        s = s * (tf.floor( tf.random_uniform([n, self.D]) + 0.5) * 2 - 1)
+        s = self.mu + 1. / tf.sqrt(beta) * s
+        
+        print s
+
+        logq  = 0.5 * tf.log(beta) - tf.log(2.0) - tf.lgamma ( 1 + 1. / rho ) - beta ** (rho/2) * tf.abs(s-self.mu)**rho
+        logq  = tf.reduce_sum(logq, -1)
+        return s, logq
+        
 
 class DeepBase(BaseMeasure):
     
