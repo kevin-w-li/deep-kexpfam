@@ -256,7 +256,8 @@ def main():
                 tqdm.write("WARNING: {}/{} says it's in progress; did it crash?"
                            .format(dset, seed))
             except AssertionError:
-                tqdm.write("Got nans/infs. Leaving as 'in progress'")
+                tqdm.write("{}/{}: got nans/infs. Leaving as 'in progress'"
+                           .format(dset, seed))
 
 
 if __name__ == '__main__':

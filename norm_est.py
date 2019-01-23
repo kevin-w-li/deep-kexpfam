@@ -61,7 +61,10 @@ def main():
     for dset in maybe_tqdm(args.dsets):
         tqdm.write("Starting on {}".format(dset))
         for seed in maybe_tqdm(args.seeds):
-            compute_for(dset, seed, pbar=tqdm, **kwargs)
+            try:
+                compute_for(dset, seed, pbar=tqdm, **kwargs)
+            except AssertionError:
+                tqdm.write("Bad model: {}/{}".format(dset, seed))
 
 
 if __name__ == '__main__':
