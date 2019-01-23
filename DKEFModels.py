@@ -99,7 +99,7 @@ class DeepLiteMixture(object):
             l = self.lites[i]
             d = self.targets.ps[i].trans(data) 
             ll[:,i] = l.eval(d, bar=False, **kwargs) + np.linalg.slogdet(self.targets.ps[i].W)[1]
-            g[...,i]  = l.grad(d).dot((self.targets.ps[i].W))
+            g[...,i]  = l.grad(d).dot((self.targets.ps[i].W.T))
 
         loglik = logsumexp(ll, 1, b=self.props)
         
@@ -124,7 +124,7 @@ class DeepLite(object):
                     npoint=300, ntrain=100, nvalid=100, nbatch=1,points_type="opt", clip_score=False,
                     step_size=1e-3, niter=10000, patience=200, kernel_type="gaussian",
                     final_step_size = 1e-3, final_ntrain=200, final_nvalid=200, final_niter=1000,
-                    gpu_count=1, cpu_count=None, fn_ext = "", train_stage = 0, nl_type = None, add_skip=True, curve_penalty=True,
+                    gpu_count=1, cpu_count=None, fn_ext = "", train_stage = 0, nl_type = "linear", add_skip=True, curve_penalty=True,
                     ):
         
         self.target = target

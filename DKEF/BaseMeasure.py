@@ -100,8 +100,6 @@ class GaussianBase(BaseMeasureBase):
         s = s * (tf.floor( tf.random_uniform([n, self.D]) + 0.5) * 2 - 1)
         s = self.mu + 1. / tf.sqrt(beta) * s
         
-        print s
-
         logq  = 0.5 * tf.log(beta) - tf.log(2.0) - tf.lgamma ( 1 + 1. / rho ) - beta ** (rho/2) * tf.abs(s-self.mu)**rho
         logq  = tf.reduce_sum(logq, -1)
         return s, logq

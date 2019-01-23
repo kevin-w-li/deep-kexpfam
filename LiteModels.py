@@ -106,7 +106,7 @@ class DeepLiteMixture(object):
             l = self.lites[i]
             d = self.targets.ps[i].trans(data) 
             ll[:,i] = l.eval(d, bar=False, **kwargs) + np.linalg.slogdet(self.targets.ps[i].W)[1]
-            g[...,i]  = l.grad(d).dot((self.targets.ps[i].W))
+            g[...,i]  = l.grad(d).dot((self.targets.ps[i].W.T))
 
         loglik = logsumexp(ll, 1, b=self.props)
         
