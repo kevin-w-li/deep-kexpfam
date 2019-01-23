@@ -96,17 +96,18 @@ def estimate_bias(model, n_pct=10**6, n_hoeffding=10**7,
     #   Pr(\sum 1(X <= x) - E[1(X <= x)] > eps) <= exp(- 2 n eps^2) = delta
     #   eps = sqrt(log(1/delta) / (2n))
     p_hat = est_cdf(model, log_s, n_hoeffding,
-                    pbar_args=dict(desc="2. hoeffding"), **batch_kw)
+                    pbar_args=dict(desc="2. hoeffding "), **batch_kw)
     rho = p_hat + np.sqrt(-np.log(hoeffding_delta) / (2 * n_hoeffding))
     assert rho < .5, "!!!: {}, {}".format(rho, p_hat)
 
     # estimate the variance
     log_Z_for_var, log_var_1 = est_mean(
         model, n_var, include_var=True,
-        pbar_args=dict(desc="3. variance"), **batch_kw)
+        pbar_args=dict(desc="3. variance  "), **batch_kw)
 
     # estimate of the normalizer to use in the bound
-    log_Z = est_mean(model, n_var, pbar_args=dict(desc="4. mean"), **batch_kw)
+    log_Z = est_mean(model, n_var,
+                     pbar_args=dict(desc="4. mean      "), **batch_kw)
 
     # the total bound is:
     # psi(q, Z) = log(Z/q) + q/Z - 1
