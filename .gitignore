@@ -16,3 +16,4 @@ run*
 gen*
 *.sh
 exp_code/*
+nystrom_kexpfam/*

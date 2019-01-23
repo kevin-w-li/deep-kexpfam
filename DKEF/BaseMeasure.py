@@ -21,6 +21,7 @@ class GaussianBase(BaseMeasureBase):
             self.mu    = tf.Variable([0]*D, dtype=FDTYPE, name="mu", trainable=trainable) 
             self.sigma = tf.Variable([sigma]*D,  dtype=FDTYPE, name="sigma", trainable=trainable)
             self.beta  = tf.exp(tf.Variable([0]*D, dtype=FDTYPE, name="beta", trainable=trainable)) + 1
+        self.D = D
 
     def get_fun(self, data):
         

@@ -276,11 +276,9 @@ class DeepLite(object):
             for i in range(len(init_log_sigma)):
                 
                 if kernel_type=="gaussian":
-                    #kernel  = DeepGaussianKernel([npoint, ndims[-1][0]], init_std=1)
                     kernel  = GaussianKernel(init_log_sigma[i],   trainable=True)
-                    '''
                     sigma   = kernel.sigma
-                    '''
+
                 elif kernel_type == "linear":
                     kernel  = PolynomialKernel(1.0,0.0)
                     sigma   = tf.constant(0.0, dtype=FDTYPE)

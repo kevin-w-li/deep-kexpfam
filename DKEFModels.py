@@ -261,11 +261,13 @@ class DeepLite(object):
             nkernel = len(init_log_sigma)
 
             add_skip = nlayer>1 if add_skip else False
+            
             for i in range(len(init_log_sigma)):
                 
                 if kernel_type=="gaussian":
                     kernel  = GaussianKernel(init_log_sigma[i],   trainable=True)
                     sigma   = kernel.sigma
+
                 elif kernel_type == "linear":
                     kernel  = PolynomialKernel(1.0,0.0)
                     sigma   = tf.constant(0.0, dtype=FDTYPE)
@@ -306,7 +308,7 @@ class DeepLite(object):
             kernel    = MixtureKernel( kernels, props )
 
             self.alpha   = tf.Variable(tf.zeros(npoint), dtype=FDTYPE, name="alpha_eval", trainable=False)
-            kn = Model(kernel, npoint, points=points, alpha=self.alpha,
+            kn = LiteModel(kernel, npoint, points=points, alpha=self.alpha,
                             init_log_lam=init_log_lam, log_lam_weights=log_lam_weights, 
                             noise_std=noise_std, base=base, curve_penalty=curve_penalty)
 
@@ -340,7 +342,7 @@ class DeepLite(object):
                 HqH  = tf.Variable(tf.zeros((npoint)), dtype=FDTYPE, name="HqH", trainable=False)
                 self.ops["zero_quad_lin"]  = [ag.assign(tf.zeros_like(ag)) for ag in [G2, H2, H, GqG, HqH]]
                  
-                _, b_H, b_G2, b_H2, b_GqG, _, _, b_HqH, _, _  = kn.opt_alpha(data=train_data, add_noise=True)
+                _, b_H, b_G2, b_H2, b_GqG, _, _, b_HqH, _ = kn.opt_alpha(data=train_data, add_noise=True)
 
                 nt = tf.cast(tf.shape(train_data)[0], FDTYPE)
                 n_acc_quad_lin= tf.placeholder(FDTYPE, shape=(), name="n_acc")

@@ -47,7 +47,7 @@ class LiteModel:
         
 
         if base:
-            self.base = GaussianBase(self.ndim_in[0], 2)
+            self.base = MixtureBase([GaussianBase(self.ndim_in[0], 2)])
 
     def _score_statistics(self, data, add_noise=False, take_mean=True):
         
@@ -237,7 +237,7 @@ class LiteModel:
         
         score_mean = tf.reduce_mean(score)
         score_std  = tf.sqrt(tf.reduce_mean(score**2) - score_mean**2)
-        count = tf.reduce_sum(tf.cast(score < score_mean-3*score_std, "int32"))
+        #count = tf.reduce_sum(tf.cast(score < score_mean-3*score_std, "int32"))
 
         if clip_score:
             score = tf.clip_by_value(score, score_mean-3*score_std,np.inf)
@@ -264,7 +264,7 @@ class LiteModel:
             k_loss = tf.zeros([], dtype=FDTYPE)
 
 
-        return loss, score, r_norm, l_norm, curve, w_norm, k_loss, test_score, count, \
+        return loss, score, r_norm, l_norm, curve, w_norm, k_loss, test_score,\
                 save_alpha
         
     def set_points(self, points):
