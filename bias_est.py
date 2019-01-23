@@ -72,6 +72,7 @@ def est_log_percentile(m, p, n, q_std=None, **batch_kwargs):
     log_rats = run_batches(m, ['logr'], n, q_std=q_std, **batch_kwargs)
     log_rats = np.concatenate(np.squeeze(log_rats, 1), 0)
     assert log_rats.shape == (n,)
+    assert np.all(np.isfinite(log_rats))
     return np.percentile(log_rats, p)
 
 
