@@ -24,7 +24,7 @@ dl_args = dict(
 
 
 def run_batches(m, op_names, n, q_std=None, le_cutoff=None, batch_size=10**6,
-                pbar=None, pbar_args={}):
+                pbar=None, pbar_args={}, allow_inf=False):
     n_batches = int(np.ceil(float(n) / batch_size))
     sizes = np.full(n_batches, batch_size)
     sizes[-1] = n - (n_batches - 1) * batch_size
@@ -45,6 +45,8 @@ def run_batches(m, op_names, n, q_std=None, le_cutoff=None, batch_size=10**6,
     for sz in (pbar(sizes, **pbar_args) if pbar else sizes):
         fd[m.nodes['n_rand']] = sz
         res.append(m.sess.run(ops, feed_dict=fd))
+        if not allow_inf:
+            assert np.all(np.isfinite(res[-1]))
     return np.asarray(res)
 
 
