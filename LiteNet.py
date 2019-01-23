@@ -514,7 +514,6 @@ class GaussianBase(BaseMeasure):
         return s, g, f
 
     def get_hess_grad_fun(self, data):
-        
         sigma2 = tf.square(self.sigma)
         d = data - self.mu
         f = -0.5 * tf.reduce_sum(tf.abs(d)**self.beta / sigma2,-1)
@@ -524,7 +523,6 @@ class GaussianBase(BaseMeasure):
         return h, g, f
 
     def get_hess_grad(self, data):
-        
         sigma2 = tf.square(self.sigma)
         d = data - self.mu
         g = - self.beta * tf.abs(d) ** (self.beta-1) * tf.sign(d) / sigma2 / 2.0
@@ -533,21 +531,26 @@ class GaussianBase(BaseMeasure):
         return h, g
 
     def sample_logq(self, n):
-        
         # https://sccn.ucsd.edu/wiki/Generalized_Gaussian_Probability_Density_Function#Generating_Random_Samples
-        # their beta is our gamma
         # their rho is our beta
+        # their beta is our (1/(2 * sigma^2))^(2/beta)
+        t_rho = self.beta
+        t_beta = (1. / (2 * self.sigma**2)) ** (2. / t_rho)
 
-        beta = (1./(2*self.sigma**2))**(2./self.beta)
-        rho   = self.beta
-        s = tf.abs(tf.random_gamma([n], 1.0/rho)) ** (1.0 / rho)
-        s = s * (tf.floor( tf.random_uniform([n, self.D]) + 0.5) * 2 - 1)
-        s = self.mu + 1. / tf.sqrt(beta) * s
-        
-        logq  = 0.5 * tf.log(beta) - tf.log(2.0) - tf.lgamma ( 1 + 1. / rho ) - beta ** (rho/2) * tf.abs(s-self.mu)**rho
-        logq  = tf.reduce_sum(logq, -1)
+        s = tf.abs(tf.random_gamma([n], 1. / t_rho)) ** (1. / t_rho)
+        s = s * (tf.floor(tf.random_uniform([n, self.D]) + 0.5) * 2 - 1)
+        s = self.mu + 1. / tf.sqrt(t_beta) * s
+
+        logq = self.get_log_normaliser() - self.get_fun(s)
         return s, logq
-        
+
+    def get_log_normaliser(self):
+        # https://sccn.ucsd.edu/wiki/Generalized_Gaussian_Probability_Density_Function#Density_Function
+        # each of our dimensions is   exp(- |x - mu|^beta / (2 * sigma^2) )
+        t_beta = (1./(2*self.sigma**2))**(2./self.beta)
+        t_rho = self.beta
+        return tf.reduce_sum(0.5 * tf.log(t_beta) - tf.log(2.) - tf.lgamma(1 + 1. / t_rho))
+
 
 class DeepBase(BaseMeasure):
     

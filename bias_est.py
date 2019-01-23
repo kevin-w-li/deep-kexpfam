@@ -22,38 +22,40 @@ dl_args = dict(
     ntrain=100, nvalid=100, patience=200, clip_score=False,
     curve_penalty=True, train_stage=2)
 
-q_var = 4
-q_std = np.sqrt(q_var)
 
-RES_DIR = os.path.dirname(os.path.abspath(__file__))
-BASE_DIR = os.path.join(RES_DIR, 'bias')
-
-
-def run_batch_q0(m, ops, n, batch_size=10**6, pbar=None, pbar_args={}):
+def run_batches(m, op_names, n, q_std=None, le_cutoff=None, batch_size=10**6,
+                pbar=None, pbar_args={}):
     n_batches = int(np.ceil(float(n) / batch_size))
     sizes = np.full(n_batches, batch_size)
-    sizes[:n - sizes.sum()] += 1
+    sizes[-1] = n - (n_batches - 1) * batch_size
     assert sizes.sum() == n
+    assert 1 <= sizes[-1] <= batch_size
 
-    D = m.target.D
-    return np.array([
-        m.sess.run(ops, feed_dict={m.nodes['n_rand']: sz, m.nodes['q_std']: q_std})
-        for sz in (sizes if pbar is None else pbar(sizes, **pbar_args))
-    ])
+    fd = {}
+    if le_cutoff is not None:
+        fd[m.nodes['le_cutoff']] = le_cutoff
+
+    if q_std is None:
+        ops = [m.nodes['q_' + name] for name in op_names]
+    else:
+        ops = [m.nodes[name] for name in op_names]
+        fd['q_std'] = q_std
+
+    res = []
+    for sz in (pbar(sizes, **pbar_args) if pbar else sizes):
+        fd[m.nodes['n_rand']] = sz
+        res.append(m.sess.run(ops, feed_dict=fd))
+    return np.asarray(res)
 
 
-def est_mean(m, n, include_var=False, **batch_kwargs):
-    with m.sess.graph.as_default():
-        diffs = m.nodes['logr']
-        ops = [tf.reduce_logsumexp(diffs)]
-        if include_var:
-            ops.append(tf.reduce_logsumexp(2 * diffs))
-
-    bits = run_batch_q0(m, ops, n, **batch_kwargs)
+def est_mean(m, n, include_var=False, q_std=None, **batch_kwargs):
+    op_names = ['lse_logr', 'lse_2logr'] if include_var else ['lse_logr']
+    bits = run_batches(m, op_names, n, q_std=q_std, **batch_kwargs)
     log_means = logsumexp(bits, axis=0) - np.log(n)
     log_mean_est = log_means[0]
 
     if include_var:
+        assert len(log_means) == 2
         log_mean_sq_est = log_means[1]
         log_var_est = (
             log_mean_sq_est
@@ -62,20 +64,20 @@ def est_mean(m, n, include_var=False, **batch_kwargs):
         )
         return log_mean_est, log_var_est
     else:
+        assert len(log_means) == 0
         return log_mean_est
 
 
-def est_log_percentile(m, p, n, **batch_kwargs):
-    log_rats = run_batch_q0(m, [m.nodes['logr']], n, **batch_kwargs)
-    assert log_rats.shape[1] == 1
+def est_log_percentile(m, p, n, q_std=None, **batch_kwargs):
+    log_rats = run_batches(m, ['logr'], n, q_std=q_std, **batch_kwargs)
+    log_rats = np.concatenate(np.squeeze(log_rats, 1), 0)
+    assert log_rats.shape == (n,)
     return np.percentile(log_rats, p)
 
 
-def est_cdf(m, x, n, **batch_kwargs):
-    with m.sess.graph.as_default():
-        diff = m.nodes['logr']
-        le = tf.count_nonzero(diff <= x)
-    ests = run_batch_q0(m, [le], n, **batch_kwargs)
+def est_cdf(m, x, n, q_std=None, **batch_kwargs):
+    ests = run_batches(m, ['logr_le'], n, le_cutoff=x,
+                       q_std=q_std, **batch_kwargs)
     assert ests.shape[1] == 1
     return ests.sum() / n
 
@@ -83,27 +85,25 @@ def est_cdf(m, x, n, **batch_kwargs):
 def estimate_bias(model, n_pct=10**6, n_hoeffding=10**7,
                   percentile=40, hoeffding_delta=.001,
                   n_var=10**7, n_psi=10**7, **batch_kw):
-    D = model.target.D
-
     # find the probability-1 lower bound, a
-    alpha = model.sess.run(model.alpha)
-    log_a = alpha[alpha < 0].sum() + .5 * D * np.log(2 * np.pi * q_var)
+    log_a = model.sess.run(model.nodes['q_logr_lowerbound'])
 
     # find the point s at the 40th percentile
-    if 'batch_size' in batch_kw:
-        assert batch_kw['batch_size'] >= 10**4
-    log_s = est_log_percentile(model, percentile, n_pct, pbar_args=dict(desc="1. percentile"), **batch_kw)
+    log_s = est_log_percentile(model, percentile, n_pct,
+                               pbar_args=dict(desc="1. percentile"), **batch_kw)
 
     # get Hoeffding bound on cdf at s:
     #   Pr(\sum 1(X <= x) - E[1(X <= x)] > eps) <= exp(- 2 n eps^2) = delta
     #   eps = sqrt(log(1/delta) / (2n))
-    p_hat = est_cdf(model, log_s, n_hoeffding, pbar_args=dict(desc="2. hoeffding"), **batch_kw)
+    p_hat = est_cdf(model, log_s, n_hoeffding,
+                    pbar_args=dict(desc="2. hoeffding"), **batch_kw)
     rho = p_hat + np.sqrt(-np.log(hoeffding_delta) / (2 * n_hoeffding))
     assert rho < .5, "!!!: {}, {}".format(rho, p_hat)
 
     # estimate the variance
     log_Z_for_var, log_var_1 = est_mean(
-        model, n_var, include_var=True, pbar_args=dict(desc="3. variance"), **batch_kw)
+        model, n_var, include_var=True,
+        pbar_args=dict(desc="3. variance"), **batch_kw)
 
     # estimate of the normalizer to use in the bound
     log_Z = est_mean(model, n_var, pbar_args=dict(desc="4. mean"), **batch_kw)
@@ -158,8 +158,13 @@ def estimate_bias(model, n_pct=10**6, n_hoeffding=10**7,
 
 
 def compute_for(dset, seed, gpu_count=0, cpu_count=None,
-                bias_seed_offset=None, load_only=False, **kwargs):
-    pth = os.path.join(BASE_DIR, '{}/{}.npz'.format(dset, seed))
+                bias_seed_offset=None, load_only=False,
+                base_dir=None, **kwargs):
+    if base_dir is None:
+        base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                'bias')
+
+    pth = os.path.join(base_dir, '{}/{}.npz'.format(dset, seed))
     if os.path.exists(pth):
         res = dict(**np.load(pth))
         if 'in_progress' in res:
@@ -187,6 +192,7 @@ def compute_for(dset, seed, gpu_count=0, cpu_count=None,
     np.savez(pth, **res)
     return res
 
+
 def load_model(dset, seed, gpu_count=0, cpu_count=None):
     p = load_data(dset, seed=seed, itanh=False, whiten=True)
     model = DeepLite(p, seed=seed, gpu_count=gpu_count, cpu_count=cpu_count,
@@ -199,7 +205,8 @@ def load_model(dset, seed, gpu_count=0, cpu_count=None):
 def bias_est(n_samps, bias_info):
     return (
         np.exp(bias_info['log_term1'] - np.log(n_samps))
-        + bias_info['term2_scale'] * np.exp(n_samps * bias_info['term2_log_base']))
+        + bias_info['term2_scale'] * np.exp(
+                n_samps * bias_info['term2_log_base']))
 
 
 def bias_est_for(dset, seed, n_samps, **kwargs):
@@ -226,16 +233,14 @@ def main():
     parser.add_argument('--base-dir', type=os.path.abspath)
     args = parser.parse_args()
 
-    global BASE_DIR
-    if args.base_dir is not None:
-        BASE_DIR = args.base_dir
-
     kwargs = vars(args).copy()
-    del kwargs['dsets'], kwargs['seeds'], kwargs['base_dir']
+    del kwargs['dsets'], kwargs['seeds']
     if kwargs['pbar'] is True:
         kwargs['pbar'] = tqdm
 
-    maybe_tqdm = lambda x, **k: tqdm(x, **k) if len(x) > 1 else x
+    def maybe_tqdm(x, **k):
+        return tqdm(x, **k) if len(x) > 1 else x
+
     for dset in maybe_tqdm(args.dsets):
         tqdm.write("Starting on {}".format(dset))
         for seed in maybe_tqdm(args.seeds):

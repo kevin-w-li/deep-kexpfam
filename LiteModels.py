@@ -399,7 +399,8 @@ class DeepLite(object):
             # add for logr 
             q_std = tf.placeholder(dtype=FDTYPE, shape=[], name="q_std")
             n_rand = tf.placeholder(dtype="int32", shape=[], name="n_rand")
-            self.nodes= dict(q_std=q_std, n_rand=n_rand)
+            le_cutoff = tf.placeholder(dtype=FDTYPE, shape=[], name="le_cutoff")
+            self.nodes= dict(q_std=q_std, n_rand=n_rand, le_cutoff=le_cutoff)
             rand_norm = tf.random_normal((n_rand, self.target.D), mean=0.0, stddev=q_std, dtype=FDTYPE)
             rand_fv   = kn.evaluate_fun(rand_norm, alpha = self.alpha)
             logq = (-.5 * self.target.D * tf.log(2 * np.pi * q_std**2)
@@ -407,13 +408,21 @@ class DeepLite(object):
 
             self.nodes["logr"] = rand_fv - logq
             self.nodes["lse_logr"] = tf.reduce_logsumexp(self.nodes["logr"])
+            self.nodes["lse_2logr"] = tf.reduce_logsumexp(2 * self.nodes["logr"])
+            self.nodes["logr_le"] = tf.count_nonzero(self.nodes["logr"] <= le_cutoff)
 
+            assert len(kn.base.measures) == 1
             q_sample, q_logq = kn.base.measures[0].sample_logq(n_rand)
             q_rand_fv = kn.evaluate_fun(q_sample, alpha=self.alpha)
 
             self.nodes["q_logr"] = q_rand_fv - q_logq
             self.nodes["q_lse_logr"] = tf.reduce_logsumexp(self.nodes["q_logr"])
+            self.nodes["q_lse_2logr"] = tf.reduce_logsumexp(2 * self.nodes["q_logr"])
+            self.nodes["q_logr_le"] = tf.count_nonzero(self.nodes["q_logr"] <= le_cutoff)
 
+            self.nodes["q_logr_lowerbound"] = (
+                tf.reduce_sum(tf.minimum(self.alpha, 0))
+                - kn.base.measures[0].get_log_normaliser())
 
             sc         = kn.individual_score(test_data, alpha=self.alpha)[0]
             self.ops["hv"] = hv
