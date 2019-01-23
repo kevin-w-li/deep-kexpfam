@@ -175,7 +175,7 @@ def compute_for(dset, seed, gpu_count=0, cpu_count=None,
             raise ValueError("in progress")
         return res
     if load_only:
-        raise ValueError("not computed yet and asked for load_only")
+        raise ValueError("not computed yet and asked for load_only ({})".format(pth))
 
     if not os.path.exists(os.path.dirname(pth)):
         try:
@@ -255,6 +255,8 @@ def main():
             except ValueError:
                 tqdm.write("WARNING: {}/{} says it's in progress; did it crash?"
                            .format(dset, seed))
+            except AssertionError:
+                tqdm.write("Got nans/infs. Leaving as 'in progress'")
 
 
 if __name__ == '__main__':
