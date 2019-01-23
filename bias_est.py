@@ -64,7 +64,7 @@ def est_mean(m, n, include_var=False, q_std=None, **batch_kwargs):
         )
         return log_mean_est, log_var_est
     else:
-        assert len(log_means) == 0
+        assert len(log_means) == 1
         return log_mean_est
 
 
