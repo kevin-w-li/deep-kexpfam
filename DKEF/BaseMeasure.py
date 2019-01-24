@@ -2,7 +2,7 @@ import tensorflow as tf
 import numpy as np
 from Utils import *
 
-class BaseMeasureBase(object):
+class BaseMeasure(object):
     
     def __init__(self):
         raise(NotImplementedError)
@@ -13,14 +13,15 @@ class BaseMeasureBase(object):
     def get_sec(self):
         raise(NotImplementedError)
        
-class GaussianBase(BaseMeasureBase):
+class GaussianBase(BaseMeasure):
     
-    def __init__(self, D, sigma=2.0, trainable=True):
-
+    def __init__(self, D, sigma=2.0, beta = 2.0, trainable=True):
+        
+        assert beta >= 1.0
         with tf.name_scope("GaussianBase"):
             self.mu    = tf.Variable([0]*D, dtype=FDTYPE, name="mu", trainable=trainable) 
             self.sigma = tf.Variable([sigma]*D,  dtype=FDTYPE, name="sigma", trainable=trainable)
-            self.beta  = tf.exp(tf.Variable([0]*D, dtype=FDTYPE, name="beta", trainable=trainable)) + 1
+            self.beta  = tf.exp(tf.Variable([0]*D, dtype=FDTYPE, name="beta", trainable=trainable)) + beta - 1.0
         self.D = D
 
     def get_fun(self, data):
@@ -71,7 +72,6 @@ class GaussianBase(BaseMeasureBase):
         return s, g, f
 
     def get_hess_grad_fun(self, data):
-        
         sigma2 = tf.square(self.sigma)
         d = data - self.mu
         f = -0.5 * tf.reduce_sum(tf.abs(d)**self.beta / sigma2,-1)
@@ -81,7 +81,6 @@ class GaussianBase(BaseMeasureBase):
         return h, g, f
 
     def get_hess_grad(self, data):
-        
         sigma2 = tf.square(self.sigma)
         d = data - self.mu
         g = - self.beta * tf.abs(d) ** (self.beta-1) * tf.sign(d) / sigma2 / 2.0
@@ -90,75 +89,27 @@ class GaussianBase(BaseMeasureBase):
         return h, g
 
     def sample_logq(self, n):
-        
         # https://sccn.ucsd.edu/wiki/Generalized_Gaussian_Probability_Density_Function#Generating_Random_Samples
-        # their beta is our gamma
         # their rho is our beta
+        # their beta is our (1/(2 * sigma^2))^(2/beta)
+        t_rho = self.beta
+        t_beta = (1. / (2 * self.sigma**2)) ** (2. / t_rho)
 
-        beta = (1./(2*self.sigma**2))**(2./self.beta)
-        rho   = self.beta
-        s = tf.abs(tf.random_gamma([n], 1.0/rho)) ** (1.0 / rho)
-        s = s * (tf.floor( tf.random_uniform([n, self.D]) + 0.5) * 2 - 1)
-        s = self.mu + 1. / tf.sqrt(beta) * s
-        
-        logq  = 0.5 * tf.log(beta) - tf.log(2.0) - tf.lgamma ( 1 + 1. / rho ) - beta ** (rho/2) * tf.abs(s-self.mu)**rho
-        logq  = tf.reduce_sum(logq, -1)
+        s = tf.abs(tf.random_gamma([n], 1. / t_rho)) ** (1. / t_rho)
+        s = s * (tf.floor(tf.random_uniform([n, self.D]) + 0.5) * 2 - 1)
+        s = self.mu + 1. / tf.sqrt(t_beta) * s
+
+        logq = self.get_log_normaliser() + self.get_fun(s)
         return s, logq
 
-class DeepBase(BaseMeasureBase):
-    
-    def __init__(self, Ds, init_weight_std):
- 
-        assert Ds[-1] == (1,)
-        with tf.name_scope("DeepBase"):
-            layers = []
-            for i in range(len(Ds)-1):
-                if i != len(Ds)-2:
-                    layers += LinearSoftNetwork(Ds[i], Ds[i+1], init_weight_std = init_weight_std),
-                else:
-                    layers += LinearSoftNetwork(Ds[i], Ds[i+1], init_weight_std = init_weight_std),
+    def get_log_normaliser(self):
+        # https://sccn.ucsd.edu/wiki/Generalized_Gaussian_Probability_Density_Function#Density_Function
+        # each of our dimensions is   exp(- |x - mu|^beta / (2 * sigma^2) )
+        t_beta = (1./(2*self.sigma**2))**(2./self.beta)
+        t_rho = self.beta
+        return tf.reduce_sum(0.5 * tf.log(t_beta) - tf.log(2.) - tf.lgamma(1 + 1. / t_rho))
 
-
-        self.network = DeepNetwork(layers, ndim_out = (1,), add_skip=False)
-
-    def get_fun(self, data):
-        f = self.network.forward_tensor(data)
-        return tf.squeeze(f, 1)
-
-    def get_grad(self, data):
-        g = self.network.get_grad_data(data)[0]
-        return tf.squeeze(g, 0)
-
-    def get_sec(self, data):
-        s = self.network.get_sec_data(data)[0]
-        return tf.squeeze(s, 0)
-
-    def get_grad_fun(self, data):
-        g, f = self.network.get_grad_data(data)[:2]
-        return tf.squeeze(g, 0), tf.squeeze(f, 1)
-        
-    def get_sec_grad(self, data):
-        s, g = self.network.get_sec_grad_data(data)[:2]
-        return tf.squeeze(s, 0), tf.squeeze(g, 0)
-
-    def get_hess(self, data):
-        h = self.network.get_hess_grad_data(data)[0]
-        return tf.squeeze(h, 0)
-
-    def get_sec_grad_fun(self, data):
-        s,g,f = self.network.get_sec_grad_data(data)[:3]
-        return tf.squeeze(s,0), tf.squeeze(g,0), tf.squeeze(f,1)
-
-    def get_hess_grad_fun(self, data):
-        h,g,f = self.network.get_hess_grad_data(data)[:3]
-        return tf.squeeze(h,0), tf.squeeze(g,0), tf.squeeze(f,1)
-
-    def get_hess_grad(self, data):
-        hg = self.network.get_hess_grad_data(data)[:2]
-        return (tf.squeeze(v,0) for v in hg)
-
-
-class MixtureBase(BaseMeasureBase):
+class MixtureBase(BaseMeasure):
     
     def __init__(self, measures):
         self.measures = measures

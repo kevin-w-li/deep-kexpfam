@@ -81,6 +81,13 @@ class Network(object):
         with tf.name_scope(scope):
             W = tf.Variable(init_mean + np.random.randn(*(ndim_out + ndim_in))*init_weight_std,
                             name="W", dtype=FDTYPE)
+
+            '''
+            V = tf.Variable(init_mean + np.random.randn(*(ndim_out + ndim_in))*init_weight_std,
+                            name="W", dtype=FDTYPE)
+            g = tf.Variable(1, dtype=FDTYPE)
+            W = g * V / tf.reduce_max(tf.linalg.svd(V, compute_uv=False))
+            '''
             b = tf.Variable(init_mean + np.random.randn(1, *ndim_out)*init_weight_std,
                             name="b", dtype=FDTYPE)
 
@@ -193,7 +200,7 @@ class Network(object):
         output_value = np.concatenate([results[bi][-1] for bi in xrange(nbatch)])
         return grad_value_dict, output_value
 
-    def get_grad_data(self, data):
+    def get_grad_data(self):
 
         ''' get first derivative with respect to data,
             return gradient node, output node and input (feed) node
@@ -314,10 +321,36 @@ class LinearSoftNetwork(Network):
     def __init__(self, ndim_in, ndim_out, init_weight_std = 1.0, init_mean = 0.0, scope="fc1", keep_prob=None):
         
         super(LinearSoftNetwork, self).__init__(ndim_in, ndim_out, init_mean, init_weight_std, scope, keep_prob)
-
+        
         self.nl = nl
         self.dnl = dnl
         self.d2nl = d2nl
+
+    def forward_array(self, data, param = None):
+        
+        if param is None:
+            param = self.param
+        data, single = self.reshape_data_array(data)
+            
+        data_tensor  = tf.placeholder(FDTYPE, shape= (None, ) + self.ndim_in)
+
+        W = param['W']
+        b = param['b']
+        out = tf.matmul(data_tensor, W,  transpose_b = True)
+        out += b
+        out = self.nl(out)
+
+        sess = tf.Session(config=config)
+        init = tf.global_variables_initializer()
+        sess.run(init)
+        out_value = sess.run(out, feed_dict={data_tensor: data})
+
+        if self.keep_prob is not None:
+            out_value *= np.random.rand(*out_value.shape)<sess.run(self.keep_prob)
+
+        if single:
+            out_value = out_value[0]
+        return out_value
 
     def forward_tensor(self, data, param = None):
         
@@ -338,7 +371,7 @@ class LinearSoftNetwork(Network):
             out = out[0]
         return out
 
-    def get_grad_data(self, data):
+    def get_grad_data(self, data=None):
 
         param = self.param
         
@@ -348,10 +381,8 @@ class LinearSoftNetwork(Network):
 
         W = param['W']
         b = param['b']
-        lin_out = tf.matmul(data, W,  transpose_b = True)
-        lin_out += b
-        out = self.nl(lin_out)
-
+        lin_out = tf.matmul(data, W,  transpose_b = True) + b
+        out  = self.nl(lin_out)
         grad = self.dnl(lin_out)[:,:,None] * W[None,:,:]
         grad = tf.transpose(grad, [1,0,2])
 
@@ -359,9 +390,9 @@ class LinearSoftNetwork(Network):
             out, ds = add_dropout(self, out, grad)
             grad = ds[0]
 
-        return grad, out
+        return grad, out, data
   
-    def get_sec_grad_data(self, data):
+    def get_sec_grad_data(self, data=None):
 
         if data is None:
             data = tf.placeholder(FDTYPE, shape = (None,) + self.ndim_in)
@@ -385,7 +416,7 @@ class LinearSoftNetwork(Network):
             out, ds = add_dropout(self, out, sec, grad)
             sec, grad = ds
 
-        return sec, grad, out
+        return sec, grad, out, data
 
     def get_hess_grad_data(self, data = None):
 
@@ -412,7 +443,7 @@ class LinearSoftNetwork(Network):
             out, ds = add_dropout(self, out, hess, grad)
             hess, grad = ds
 
-        return hess, grad, out
+        return hess, grad, out, data
 
 class DenseLinearSoftNetwork(Network):
 
@@ -429,6 +460,12 @@ class DenseLinearSoftNetwork(Network):
         with tf.name_scope(scope):
 
             for i in range(self.nin):
+                '''
+                V = tf.Variable(init_mean + np.random.randn(*(ndim_out + ndim_in[i]))*init_weight_std,
+                                name="W", dtype=FDTYPE)
+                g = tf.Variable(1, dtype=FDTYPE)
+                W = g * V / tf.reduce_max(tf.linalg.svd(V, compute_uv=False))
+                '''
                 W = tf.Variable(init_mean + np.random.randn(*(ndim_out + ndim_in[i]))*init_weight_std,
                                 name="W"+str(i), dtype=FDTYPE)
                 self.param["W"+str(i)] = W
@@ -447,9 +484,11 @@ class DenseLinearSoftNetwork(Network):
             self.dnl = dnl
             self.d2nl = d2nl
         
-    def forward_array(self, data):
+    def forward_array(self, data, param = None):
         
-        param = self.param
+        if param is None:
+            param = self.param
+        
         
         data_tensor  = [tf.placeholder(FDTYPE, shape= (None, ) + self.ndim_in[i]) for i in range(self.nin)]
         
@@ -470,9 +509,10 @@ class DenseLinearSoftNetwork(Network):
 
         return out_value
 
-    def forward_tensor(self, data):
+    def forward_tensor(self, data, param = None):
         
-        param = self.param
+        if param is None:
+            param = self.param
             
         out = 0.0
         for i in range(self.nin):
@@ -484,10 +524,13 @@ class DenseLinearSoftNetwork(Network):
 
         return out
 
-    def get_grad_data(self, data):
+    def get_grad_data(self, data=None):
 
         param = self.param
         
+        if data is None:
+            data = [tf.placeholder(FDTYPE, shape= (None, ) + self.ndim_in[i]) for i in range(self.nin)]
+
         lin_out = 0.0
         for i in range(self.nin):
             W = param['W'+str(i)]
@@ -499,11 +542,14 @@ class DenseLinearSoftNetwork(Network):
         grad = [self.dnl(lin_out)[:,:,None] * param['W'+str(i)][None,:,:] for i in range(self.nin)]
         grad = [tf.transpose(grad[i], [1,0,2]) for i in range(self.nin)]
 
-        return grad, out
+        return grad, out, data
   
-    def get_sec_grad_data(self, data):
+    def get_sec_grad_data(self, data=None):
 
         param = self.param
+
+        if data is None:
+            data = [tf.placeholder(FDTYPE, shape= (None, ) + self.ndim_in[i]) for i in range(self.nin)]
 
         lin_out = 0.0
         for i in range(self.nin):
@@ -518,9 +564,12 @@ class DenseLinearSoftNetwork(Network):
 
         sec  = [self.d2nl(lin_out)[:,:,None] * tf.square(param["W"+str(i)][None,:,:]) for i in range(self.nin)]
         sec  = [tf.transpose(sec[i], [1,0,2]) for i in range(self.nin)]
-        return sec, grad, out
+        return sec, grad, out, data
 
-    def get_hess_cross_grad_data(self, data):
+    def get_hess_cross_grad_data(self, data = None):
+
+        if data is None:
+            data = [tf.placeholder(FDTYPE, shape= (None, ) + self.ndim_in[i]) for i in range(self.nin)]
 
         param = self.param
 
@@ -542,7 +591,7 @@ class DenseLinearSoftNetwork(Network):
         cross = self.d2nl(lin_out)[:,:,None,None] * param["W"+str(0)][None,:,:,None] * param["W"+str(1)][None,:,None,:] 
         cross = tf.transpose(cross, [1,0,2,3])
 
-        return hess, cross, grad, out
+        return hess, cross, grad, out, data
 
 class DeepNetwork(Network):
 
@@ -565,7 +614,6 @@ class DeepNetwork(Network):
         
         layer_count = 1
         for i, l in enumerate(layers):
-
             layer_str = str(layer_count)
             p = l.param
             for k, v in p.items():
@@ -604,12 +652,12 @@ class DeepNetwork(Network):
         return d
 
 
-    def get_grad_data(self, data):
+    def get_grad_data(self, data = None):
         
         if data is None:
             data = tf.placeholder(FDTYPE, shape = (None,) + self.ndim_in)
 
-        grad, out = self.layers[0].get_grad_data(data)
+        grad, out, _ = self.layers[0].get_grad_data(data)
 
         i_idx_l = construct_index(self.layers[0].ndim_in, s="o")
 
@@ -620,7 +668,7 @@ class DeepNetwork(Network):
             i_idx_h = construct_index(layer.ndim_in, s="j")
             o_idx_h = construct_index(layer.ndim_out, s="a")
 
-            this_grad, out = layer.get_grad_data(out)
+            this_grad, out, _ = layer.get_grad_data(out)
 
             grad = tf.einsum(o_idx_h+"i"+i_idx_h+","\
                             +i_idx_h+"i"+i_idx_l+"->"\
@@ -631,7 +679,7 @@ class DeepNetwork(Network):
         if self.add_skip:
             
             layer = self.skip_layer
-            skip_grad, skip_out = layer.get_grad_data([data,out])
+            skip_grad, skip_out, _ = layer.get_grad_data([data,out])
 
             i_idx_h = construct_index(layer.ndim_in[1], s="j")
             o_idx_h = construct_index(layer.ndim_out, s="a")
@@ -643,14 +691,14 @@ class DeepNetwork(Network):
             grad = grad + skip_grad[0]
             out  = skip_out
 
-        return grad, out
+        return grad, out, data
             
-    def get_sec_grad_data(self, data):
+    def get_sec_grad_data(self, data = None):
         
         if data is None:
             data = tf.placeholder(FDTYPE, shape = (None,) + self.ndim_in, name="input")
 
-        sec, grad, out = self.layers[0].get_sec_grad_data(data)
+        sec, grad, out, _ = self.layers[0].get_sec_grad_data(data)
 
         i_idx_l = construct_index(self.layers[0].ndim_in, s="o")
 
@@ -665,7 +713,7 @@ class DeepNetwork(Network):
 
             o_idx_h = construct_index(layer.ndim_out, s="a")
 
-            this_hess, this_grad, out = self.layers[i].get_hess_grad_data(out)
+            this_hess, this_grad, out, _ = self.layers[i].get_hess_grad_data(out)
 
             sec =  tf.einsum(o_idx_h+"i"+i_idx_h+","+
                              i_idx_h_1+"i"+i_idx_l+","+
@@ -685,7 +733,7 @@ class DeepNetwork(Network):
 
             layer = self.skip_layer
 
-            skip_sec, skip_grad, skip_out = layer.get_sec_grad_data([data,out])
+            skip_sec, skip_grad, skip_out, _ = layer.get_sec_grad_data([data,out])
 
             i_idx_h   = construct_index(layer.ndim_in[1], s="j", n=2)
             i_idx_h_1 = i_idx_h[:len(i_idx_h)/2]
@@ -694,7 +742,7 @@ class DeepNetwork(Network):
             i_idx_h_c_2   = construct_index(layer.ndim_in[1], s="p", n=1)
             o_idx_h   = construct_index(layer.ndim_out, s="a")
 
-            this_hess, this_cross, _, _ = layer.get_hess_cross_grad_data([data,out])
+            this_hess, this_cross, _, _, _ = layer.get_hess_cross_grad_data([data,out])
 
             sec =  tf.einsum(o_idx_h+"i"+i_idx_h+","+
                              i_idx_h_1+"i"+i_idx_l+","+
@@ -715,14 +763,14 @@ class DeepNetwork(Network):
             grad = grad + skip_grad[0]
             out  = skip_out
 
-        return sec, grad, out
+        return sec, grad, out, data
 
-    def get_hess_grad_data(self, data):
+    def get_hess_grad_data(self, data = None):
 
         if data is None:
             data = tf.placeholder(FDTYPE, shape = (None,) + self.ndim_in, name="input")
 
-        hess, grad, out = self.layers[0].get_hess_grad_data(data)
+        hess, grad, out, _ = self.layers[0].get_hess_grad_data(data)
 
         i_idx_l = construct_index(self.layers[0].ndim_in, s="o",n=2)
         i_idx_l_1 = i_idx_l[:len(i_idx_l)/2]
@@ -739,7 +787,7 @@ class DeepNetwork(Network):
 
             o_idx_h = construct_index(layer.ndim_out, s="a")
 
-            this_hess, this_grad, out = self.layers[i].get_hess_grad_data(out)
+            this_hess, this_grad, out, _ = self.layers[i].get_hess_grad_data(out)
 
             hess =  tf.einsum(o_idx_h +"i"+i_idx_h  +","+
                              i_idx_h_1+"i"+i_idx_l_1+","+
@@ -761,7 +809,7 @@ class DeepNetwork(Network):
 
             layer = self.skip_layer
 
-            skip_hess, skip_cross, skip_grad, skip_out = layer.get_hess_cross_grad_data([data,out])
+            skip_hess, skip_cross, skip_grad, skip_out, _ = layer.get_hess_cross_grad_data([data,out])
 
             i_idx_h = construct_index(layer.ndim_in[1], s="j", n=2)
             i_idx_h_1 = i_idx_h[:len(i_idx_h)/2]
@@ -792,7 +840,7 @@ class DeepNetwork(Network):
             grad = grad + skip_grad[0]
             out  = skip_out
 
-        return hess, grad, out
+        return hess, grad, out, data
         
 
 class LinearNetwork(Network):
@@ -843,7 +891,7 @@ class LinearNetwork(Network):
             out = out[0]
         return out
 
-    def get_grad_data(self, data):
+    def get_grad_data(self, data=None):
 
         param = self.param
 
@@ -856,9 +904,9 @@ class LinearNetwork(Network):
         N = tf.shape(data)[0]
         grad = tf.tile(W[None,:,:], [N, 1, 1])
         grad = tf.transpose(grad, [1,0,2])
-        return grad, output
+        return grad, output, data
 
-    def get_sec_grad_data(self, data):
+    def get_sec_grad_data(self, data=None):
 
         if data is None:
             data = tf.placeholder(FDTYPE, shape = (None,) + self.ndim_in)
@@ -874,9 +922,9 @@ class LinearNetwork(Network):
         grad = tf.transpose(grad, [1,0,2])
 
         sec = tf.zeros_like(grad)
-        return sec, grad, out
+        return sec, grad, out, data
 
-    def get_hess_grad_data(self, data):
+    def get_hess_grad_data(self, data=None):
 
         if data is None:
             data = tf.placeholder(FDTYPE, shape = (None,) + self.ndim_in)
@@ -892,7 +940,4 @@ class LinearNetwork(Network):
         grad = tf.transpose(grad, [1,0,2])
 
         sec = tf.zeros([N, self.ndim_out, self.ndim_in, self.ndim_in], dtype=FDTYPE)
-        return sec, grad, out
-
-        
-
+        return sec, grad, out, data

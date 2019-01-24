@@ -541,7 +541,7 @@ class GaussianBase(BaseMeasure):
         s = s * (tf.floor(tf.random_uniform([n, self.D]) + 0.5) * 2 - 1)
         s = self.mu + 1. / tf.sqrt(t_beta) * s
 
-        logq = self.get_log_normaliser() - self.get_fun(s)
+        logq = self.get_log_normaliser() + self.get_fun(s)
         return s, logq
 
     def get_log_normaliser(self):

@@ -1,8 +1,7 @@
 import os
 import numpy as np
 from maf.util import load
-#from DKEFModels import DeepLite
-from LiteModels import DeepLite
+from DKEFModels import DeepLite
 import h5py as h5
 from Datasets import load_data
 

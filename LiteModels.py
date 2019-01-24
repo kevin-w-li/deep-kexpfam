@@ -973,8 +973,8 @@ class DeepLite(object):
 
     
     def eval(self, data, batch_size = 1000, **kwargs):
-
-        self.estimate_normaliser(**kwargs)
+        kwargs["batch_size"] = batch_size
+        self.q_estimate_normaliser(**kwargs)
         
         n = data.shape[0]
         assert self.target.D == data.shape[1]

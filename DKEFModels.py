@@ -8,6 +8,7 @@ from collections import OrderedDict
 import warnings
 from scipy.misc import logsumexp
 from sklearn.cluster import KMeans
+from tensorflow.contrib.opt import ScipyOptimizerInterface
 
 from sklearn.neighbors import KernelDensity
 from sklearn.model_selection import GridSearchCV
@@ -237,7 +238,9 @@ class DeepLite(object):
                 self.train_kde = None
             
             train_data  = tf.placeholder(FDTYPE, shape=(None, target.D), name="train_data")
-            test_points = tf.placeholder(FDTYPE, shape=(None, target.D), name="test_points")
+            if points_type != "feat":
+                test_points = tf.placeholder(FDTYPE, shape=(None, target.D), name="test_points")
+
             if points_type == "fixed":
                 points  = tf.Variable(target.sample(npoint) + np.random.randn(npoint,target.D)*points_std, dtype=FDTYPE, name="points", trainable=False)
             elif points_type == "opt":
@@ -247,12 +250,14 @@ class DeepLite(object):
             elif points_type == "kmeans":
                 kmeans  = KMeans(n_clusters=npoint, random_state=self.seed).fit(self.target.sample(min(5000, self.target.N)))
                 points  = tf.Variable(kmeans.cluster_centers_ + np.random.randn(npoint,target.D)*points_std, dtype=FDTYPE, name="points", trainable=False)
+            elif points_type == "feat":
+                points  = tf.Variable(np.random.exponential(size=((npoint,) + ndims[-1]))*points_std, dtype=FDTYPE, name="points", trainable=True)
             else:
                 raise NameError(points_type + " is not a valid points type")
                 
             valid_data  = tf.placeholder(FDTYPE, shape=(None, target.D), name="valid_data")
             test_data = tf.placeholder(FDTYPE, shape=(None, target.D), name="test_data")
-            
+
             kernels = []
             sigmas  = []
             props   = []
@@ -261,7 +266,7 @@ class DeepLite(object):
             nkernel = len(init_log_sigma)
 
             add_skip = nlayer>1 if add_skip else False
-            
+
             for i in range(len(init_log_sigma)):
                 
                 if kernel_type=="gaussian":
@@ -289,12 +294,13 @@ class DeepLite(object):
 
                     network = DeepNetwork(layers, ndim_out = ndims[-1], init_weight_std = init_weight_std/np.sqrt(ndims[-1][0]), add_skip=add_skip, nl_type=nl_type)
                     net_outs.append(network.forward_tensor(test_data))
-                    kernel = CompositeKernel(kernel, network)
+                    kernel = CompositeKernel(kernel, network, feat_points=points_type=="feat")
 
                 kernels.append(kernel)
-                sigmas.append(sigma)
+                #sigmas.append(sigma)
                 props.append(prop)
-                kernel_grams.append(kernel.get_gram_matrix(test_points, test_data))
+                if points_type != "feat":
+                    kernel_grams.append(kernel.get_gram_matrix(test_points, test_data))
 
             self.ops["net_outs"]  = net_outs
             self.ops["kernel_grams"] = kernel_grams
@@ -306,16 +312,19 @@ class DeepLite(object):
             props[-1]  = 1-tf.reduce_sum(props[:-1])
 
             kernel    = MixtureKernel( kernels, props )
-
+            
             self.alpha   = tf.Variable(tf.zeros(npoint), dtype=FDTYPE, name="alpha_eval", trainable=False)
+
             kn = LiteModel(kernel, npoint, points=points, alpha=self.alpha,
                             init_log_lam=init_log_lam, log_lam_weights=log_lam_weights, 
-                            noise_std=noise_std, base=base, curve_penalty=curve_penalty)
+                            feat_points=points_type=="feat",
+                            noise_std=noise_std, base=base, curve_penalty=curve_penalty, feat_dim=ndims[-1])
 
-            loss, score, r_norm, l_norm, curve, w_norm, k_loss, test_score, save_alpha = \
+            loss, score, _, _, r_norm, l_norm, curve, w_norm, k_loss, test_score, \
+                self.states["outlier"], save_alpha = \
                 kn.val_score(train_data=train_data, valid_data=valid_data, test_data = test_data, 
                             train_kde=self.train_kde, valid_kde=self.valid_kde, clip_score=clip_score,
-             add_noise=True)
+                            add_noise=True)
 
 
             if train_stage <=0 :
@@ -332,7 +341,7 @@ class DeepLite(object):
                 self.ops["train_step"] = [optimizer.apply_gradients( zip(gradients, variables) ), save_alpha]
             
             if train_stage <= 1:
-
+                
                 # regularizer learning for final fit
                 G2  = tf.Variable(tf.zeros((npoint, npoint)), dtype=FDTYPE, name="G2", trainable=False)
                 H2  = tf.Variable(tf.zeros((npoint, npoint)), dtype=FDTYPE, name="H2", trainable=False)
@@ -342,7 +351,7 @@ class DeepLite(object):
                 HqH  = tf.Variable(tf.zeros((npoint)), dtype=FDTYPE, name="HqH", trainable=False)
                 self.ops["zero_quad_lin"]  = [ag.assign(tf.zeros_like(ag)) for ag in [G2, H2, H, GqG, HqH]]
                  
-                _, b_H, b_G2, b_H2, b_GqG, _, _, b_HqH, _ = kn.opt_alpha(data=train_data, add_noise=True)
+                _, b_H, b_G2, b_H2, b_GqG, _, _, b_HqH, _, _  = kn.opt_alpha(data=train_data, add_noise=True)
 
                 nt = tf.cast(tf.shape(train_data)[0], FDTYPE)
                 n_acc_quad_lin= tf.placeholder(FDTYPE, shape=(), name="n_acc")
@@ -366,13 +375,16 @@ class DeepLite(object):
                 alpha = tf.matrix_solve(quad, lin[:,None])[:,0]
                 save_alpha = tf.assign(self.alpha,alpha)
 
-                lambdas = [v for v in tf.trainable_variables() if "regularizers" in v.name]
+                lambdas = [v for v in tf.trainable_variables() if "regularizers" in v.name or "Base" in v.name]
                 
                 final_score = kn.score(valid_data, alpha = alpha, add_noise=True)[0]
                 final_optimizer = tf.train.AdamOptimizer(self.train_params["final_step_size"])
                 raw_gradients, variables = zip(*final_optimizer.compute_gradients(final_score, var_list = lambdas))
                 gradients, self.final_states["grad_norm"] = tf.clip_by_global_norm(raw_gradients, 100.0)
                 self.ops["train_lambdas_B"]  = [final_optimizer.apply_gradients(zip(gradients, variables)), save_alpha]
+                self.ops["train_lambdas_CG"] = ScipyOptimizerInterface(final_score, var_list = lambdas,
+                                                        method="CG")
+               
                 self.ops["assign_alpha"]  = [tf.assign(self.alpha, alpha), alpha]
 
             self.min_log_pdf = -np.inf
@@ -381,7 +393,8 @@ class DeepLite(object):
             # add for logr 
             q_std = tf.placeholder(dtype=FDTYPE, shape=[], name="q_std")
             n_rand = tf.placeholder(dtype="int32", shape=[], name="n_rand")
-            self.nodes= dict(q_std=q_std, n_rand=n_rand)
+            le_cutoff = tf.placeholder(dtype=FDTYPE, shape=[], name="le_cutoff")
+            self.nodes= dict(q_std=q_std, n_rand=n_rand, le_cutoff=le_cutoff)
             rand_norm = tf.random_normal((n_rand, self.target.D), mean=0.0, stddev=q_std, dtype=FDTYPE)
             rand_fv   = kn.evaluate_fun(rand_norm, alpha = self.alpha)
             logq = (-.5 * self.target.D * tf.log(2 * np.pi * q_std**2)
@@ -389,12 +402,21 @@ class DeepLite(object):
 
             self.nodes["logr"] = rand_fv - logq
             self.nodes["lse_logr"] = tf.reduce_logsumexp(self.nodes["logr"])
+            self.nodes["lse_2logr"] = tf.reduce_logsumexp(2 * self.nodes["logr"])
+            self.nodes["logr_le"] = tf.count_nonzero(self.nodes["logr"] <= le_cutoff)
 
+            assert len(kn.base.measures) == 1
             q_sample, q_logq = kn.base.measures[0].sample_logq(n_rand)
             q_rand_fv = kn.evaluate_fun(q_sample, alpha=self.alpha)
 
             self.nodes["q_logr"] = q_rand_fv - q_logq
             self.nodes["q_lse_logr"] = tf.reduce_logsumexp(self.nodes["q_logr"])
+            self.nodes["q_lse_2logr"] = tf.reduce_logsumexp(2 * self.nodes["q_logr"])
+            self.nodes["q_logr_le"] = tf.count_nonzero(self.nodes["q_logr"] <= le_cutoff)
+
+            self.nodes["q_logr_lowerbound"] = (
+                tf.reduce_sum(tf.minimum(self.alpha, 0))
+                - kn.base.measures[0].get_log_normaliser())
 
             sc         = kn.individual_score(test_data, alpha=self.alpha)[0]
             self.ops["hv"] = hv
@@ -426,22 +448,24 @@ class DeepLite(object):
             self.valid_data = valid_data    
             self.test_data  = test_data
             self.points     = points
-            self.test_points= test_points
+
+            if points_type != "feat":
+                self.test_points= test_points
             
             self.states["score"]   = score
             self.states["loss"]    = loss
-            self.states["sigmas"]   = sigmas
+            #self.states["sigmas"]   = sigmas
             self.states["props"]    = props
-            #self.states["r_norm"]  = r_norm
+            self.states["r_norm"]  = r_norm
             self.states["l_norm"]  = l_norm
             self.states["curve"]   = curve
             self.states["w_norm"]  = w_norm
-            #self.states["k_loss"]  = k_loss
+            self.states["k_loss"]  = k_loss
 
-            #self.states["lam_norm"]     = self.kn.lam_norm
+            self.states["lam_norm"]     = self.kn.lam_norm
             self.states["lam_curve"]    = self.kn.lam_curve
             self.states["lam_alpha"]    = self.kn.lam_alpha
-            #self.states["lam_kde"]      = self.kn.lam_kde
+            self.states["lam_kde"]      = self.kn.lam_kde
             self.states["test_score"]   = test_score
 
             for k in self.states:
@@ -451,18 +475,18 @@ class DeepLite(object):
             
             if train_stage<=1:
                 self.final_states["score"] = final_score
-                #self.final_states["lam_norm"]     = self.kn.lam_norm
+                self.final_states["lam_norm"]     = self.kn.lam_norm
                 self.final_states["lam_curve"]    = self.kn.lam_curve
                 self.final_states["lam_alpha"]    = self.kn.lam_alpha
-                #self.final_states["lam_kde"]      = self.kn.lam_kde
+                self.final_states["lam_kde"]      = self.kn.lam_kde
 
-                self.final_states["sigmas"]   = sigmas
+                #self.final_states["sigmas"]   = sigmas
                 self.final_states["props"]    = props
                 self.final_states["r_norm"]  = r_norm
                 self.final_states["l_norm"]  = l_norm
                 self.final_states["curve"]   = curve
                 self.final_states["w_norm"]  = w_norm
-                #self.final_states["k_loss"]  = k_loss
+                self.final_states["k_loss"]  = k_loss
             for k in self.final_states:
                 if k not in self.final_state_hist:
                     self.final_state_hist[k] = []
@@ -561,7 +585,7 @@ class DeepLite(object):
         last_epoch = 0
         best_score = np.inf
         wait_window = 0
-        with tqdm(range(niter+1), ncols=100, desc="%20s"%"trainining kernel", postfix=[dict(loss="%.3f" % 0.0, test="%.3f" % 0.0)]) as tr:    
+        with tqdm(range(niter+1), ncols=100, desc="trainining kernel", postfix=[dict(loss="%.3f" % 0.0, test="%.3f" % 0.0)]) as tr:    
 
             for i in tr: 
 
@@ -640,7 +664,7 @@ class DeepLite(object):
         nbatch = int(np.ceil(self.target.N * 1.0 / final_ntrain))
         
         self.sess.run(self.ops["zero_quad_lin"])
-        for i in tqdm(range(nbatch), ncols=100, desc="%20s"%"accumulating stats"):
+        for i in tqdm(range(nbatch), ncols=100, desc="accumulating stats"):
             data = self.target.data[i*final_ntrain:(i+1)*final_ntrain]
             self.sess.run(self.ops["acc_quad_lin"], feed_dict={self.train_data:data, 
                                                                n_acc_quad_lin:self.target.N})
@@ -649,7 +673,7 @@ class DeepLite(object):
         lam_names = [k for k in self.states.keys() if "lam" in k ]
         lambdas = [ self.states[ln] for ln in lam_names ]
 
-        for i in tqdm(range(final_niter), ncols=100, desc="%20s"%"fitting lambda"):
+        for i in tqdm(range(final_niter), ncols=100, desc="fitting lambda"):
             pointer += final_nvalid
             if pointer >= self.target.nvalid:
                 pointer = 0
@@ -672,6 +696,37 @@ class DeepLite(object):
         self.sess.run(self.ops["assign_alpha"])
         self.save()
         return self.final_state_hist
+
+    def fit_alpha_CG(self, **kwargs):
+
+        for k,v in kwargs.items():
+            if k in self.train_params:
+                self.train_params[k] = v
+        
+        feed = {}
+        
+        final_ntrain = self.train_params["final_ntrain"]
+        final_nvalid  = self.train_params["final_nvalid"]
+        final_niter  = self.train_params["final_niter"]
+        nbatch = int(np.ceil(self.target.N * 1.0 / final_ntrain))
+
+        for i in tqdm(range(nbatch), ncols=100, desc="accumulating stats"):
+            data = self.target.data[i*final_ntrain:(i+1)*final_ntrain]
+            self.sess.run(self.ops["acc_quad_lin"], feed_dict={self.train_data:data})
+    
+        self.ops["train_lambdas_CG"].minimize(self.sess, feed_dict={self.valid_data : self.target.valid_data})
+        self.sess.run(self.ops["assign_alpha"])
+
+        final_state_vals = self.sess.run(self.final_states.values()[2:])
+        nbatch = int(np.ceil(1.0*self.target.nvalid/final_nvalid))
+        s = 0
+        for i in range(nbatch):
+            d = self.target.valid_data[i*final_nvalid:(i+1)*final_nvalid]
+            feed[self.valid_data] = d
+            s += self.sess.run(self.final_states["score"], feed_dict=feed) * d.shape[0] / self.target.nvalid
+
+        final_state_vals = [0,s]+ final_state_vals
+        return dict(zip(self.final_state_hist.keys(), final_state_vals))
 
     def set_test(self, rebuild=False, gpu_count=None, cpu_count=None, train_stage=0):
 
@@ -698,7 +753,7 @@ class DeepLite(object):
         
     def default_file_name(self):
 
-        file_name = "%s_D%02d_l%d_nd%d_np%d_nt%d_nv%d_pt%s_ss%d_ni%d_n%02d_k%d_m%d_b%d_p%d_nk%d_cl%d_cu%d" % \
+        file_name = "%s_D%02d_l%d_nd%d_np%d_nt%d_nv%d_pt%s_ss%d_ni%d_n%02d_k%d_m%d_b%d_p%d_nk%d_cl%d_cu%d_q1" % \
             (self.target.name[0], self.target.D, self.model_params["nlayer"], 
              np.prod(self.model_params["ndims"][0]), 
              self.model_params["npoint"], self.train_params["ntrain"], 
@@ -804,7 +859,7 @@ class DeepLite(object):
 
         return value
 
-    def estimate_normaliser(self, n=10**8, batch_size=10**5, std=2.0, budget=120, bar = True):
+    def estimate_normaliser(self, n=10**8, batch_size=10**3, std=2.0, budget=120, bar = True):
         
         if n==0:
             assert self.logZ is not None
@@ -829,7 +884,7 @@ class DeepLite(object):
         self.Z = np.exp(self.logZ)
         return self.logZ
 
-    def q_estimate_normaliser(self, n=10**8, batch_size=10**3, budget=120, bar = True):
+    def q_estimate_normaliser(self, n=10**8, batch_size=10**3, std=2.0, budget=120, bar = True):
         
         if n==0:
             assert self.logZ is not None
@@ -854,13 +909,12 @@ class DeepLite(object):
         return self.logZ
 
     
-    def eval(self, data, batch_size = 100000, **kwargs):
-
-        self.estimate_normaliser(**kwargs)
+    def eval(self, data, batch_size = 1000, **kwargs):
+        kwargs["batch_size"] = batch_size
+        self.q_estimate_normaliser(**kwargs)
         
         n = data.shape[0]
         assert self.target.D == data.shape[1]
         logp = self.fun_multiple(data, batch_size = batch_size)
         logp -= self.logZ
         return logp
-

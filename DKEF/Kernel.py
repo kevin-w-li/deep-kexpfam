@@ -154,7 +154,7 @@ class NetworkKernel(Kernel):
         X = self.network.forward_tensor(X)
         d2Y, dY, _, _ = self.network.get_sec_grad_data(Y)
 
-        input_idx = onstruct_index(self.network.ndim_in)
+        input_idx = construct_index(self.network.ndim_in)
 
         X = tf.reshape(X, [-1, self.out_size])
 
@@ -184,7 +184,7 @@ class NetworkKernel(Kernel):
     def get_hess(self, X, Y):
 
         X = self.network.forward_tensor(X)
-        d2Y, _, _ = self.network.get_hess_grad_data(Y)
+        d2Y, _, _, _ = self.network.get_hess_grad_data(Y)
 
         input_idx = construct_index(self.network.ndim_in, n=2)
 
@@ -198,7 +198,7 @@ class NetworkKernel(Kernel):
     def get_hess_grad(self, X, Y):
 
         X = self.network.forward_tensor(X)
-        d2Y, dY, _ = self.network.get_hess_grad_data(Y)
+        d2Y, dY, _, _ = self.network.get_hess_grad_data(Y)
 
         input_idx_1 = construct_index(self.network.ndim_in, n=1)
         input_idx_2 = construct_index(self.network.ndim_in, n=2)
@@ -218,10 +218,11 @@ class NetworkKernel(Kernel):
 
 class CompositeKernel(Kernel):
     
-    def __init__(self, kernel, network):
+    def __init__(self, kernel, network, feat_points=False):
 
         self.kernel = kernel
         self.network = network
+        self.feat_points = feat_points
 
     def _net_forward(self, data):
 
@@ -230,19 +231,21 @@ class CompositeKernel(Kernel):
 
     def get_gram_matrix(self, X, Y):
         
-        X = self._net_forward(X)
+        if not self.feat_points:
+            X = self._net_forward(X)
         Y = self._net_forward(Y)
 
         return self.kernel.get_gram_matrix(X, Y)
 
     def get_sec_grad(self, X, Y):
-        
-        X = self._net_forward(X)
-        d2ydx2, dydx, Y  = self.network.get_sec_grad_data(Y)
+
+        if not self.feat_points:
+            X = self._net_forward(X)
+        d2ydx2, dydx, Y, _ = self.network.get_sec_grad_data(data=Y)
         hessK, gradK = self.kernel.get_hess_grad(X, Y)
 
         input_idx = construct_index(self.network.ndim_in)
-        
+
         dkdx = tf.einsum('ijk,kj'+input_idx+'->ij'+input_idx,
                         gradK, dydx)
 
@@ -250,7 +253,6 @@ class CompositeKernel(Kernel):
                             hessK, dydx) 
         s2 = tf.einsum('ijl'+input_idx+',lj'+input_idx + '->ij'+input_idx, 
                             s2, dydx) 
-
         s1 = tf.einsum('ijk,kj'+input_idx + '->ij'+input_idx, 
                             gradK, d2ydx2)
         d2kdx2 = s1 + s2
@@ -259,8 +261,9 @@ class CompositeKernel(Kernel):
 
     def get_grad(self, X, Y):
 
-        X = self._net_forward(X)
-        dydx, Y = self.network.get_grad_data(Y)
+        if not self.feat_points:
+            X = self._net_forward(X)
+        dydx, Y, _ = self.network.get_grad_data(data=Y)
         gradK = self.kernel.get_grad(X, Y)
 
         input_idx = construct_index(self.network.ndim_in)
@@ -272,8 +275,9 @@ class CompositeKernel(Kernel):
 
     def get_grad_gram(self, X, Y):
 
-        X = self._net_forward(X)
-        d2ydx2, dydx = self.network.get_sec_grad_data(Y)
+        if not self.feat_points:
+            X = self._net_forward(X)
+        d2ydx2, dydx, Y, _ = self.network.get_sec_grad_data(data=Y)
         hessK, gradK = self.kernel.get_hess_grad(X, Y)
 
         input_idx = construct_index(self.network.ndim_in)
@@ -286,8 +290,9 @@ class CompositeKernel(Kernel):
 
     def get_hess(self, X, Y):
 
-        X = self._net_forward(X)
-        d2ydx2, dydx, Y = self.network.get_hess_grad_data(Y)
+        if not self.feat_points:
+            X = self._net_forward(X)
+        d2ydx2, dydx, Y, _ = self.network.get_hess_grad_data(data=Y)
         hessK, gradK = self.kernel.get_hess_grad(X, Y)
 
         input_idx = construct_index(self.network.ndim_in, n=2)
@@ -302,9 +307,10 @@ class CompositeKernel(Kernel):
 
     def get_hess_grad(self, X, Y):
 
-        X = self._net_forward(X)
+        if not self.feat_points:
+            X = self._net_forward(X)
 
-        d2ydx2, dydx, Y = self.network.get_hess_grad_data(Y)
+        d2ydx2, dydx, Y, _ = self.network.get_hess_grad_data(data=Y)
         hessK, gradK = self.kernel.get_hess_grad(X, Y)
 
         input_idx = construct_index(self.network.ndim_in, n=2)
@@ -323,9 +329,10 @@ class CompositeKernel(Kernel):
 
     def get_hess_grad_gram(self, X, Y):
 
-        X = self._net_forward(X)
+        if not self.feat_points:
+            X = self._net_forward(X)
 
-        d2ydx2, dydx, Y = self.network.get_hess_grad_data(Y)
+        d2ydx2, dydx, Y, _ = self.network.get_hess_grad_data(data=Y)
         hessK, gradK = self.kernel.get_hess_grad(X, Y)
 
         input_idx = construct_index(self.network.ndim_in, n=2)
@@ -687,178 +694,3 @@ class PolynomialKernel(Kernel):
             K2 = self.d*(self.d-1)*(inner+self.c)**(self.d-2) * (X[:,None,None,:] * X[:,None,:,None])
 
         return K2, K1, K
-
-
-class MixtureKernel(Kernel):
-    
-    def __init__(self, kernels, props):
-        
-        assert len(props) == len(kernels)
-        self.kernels=kernels
-        self.props = props
-        self.nkernel = len(kernels)
-
-    def get_gram_matrix(self, X, Y):
-
-        out = tf.zeros([], dtype=FDTYPE)
-
-        for ki in range(self.nkernel):
-            out = out + self.kernels[ki].get_gram_matrix(X, Y) * self.props[ki]
-
-        return out
-
-    def get_sec_grad(self, X, Y):
-        
-        grad = tf.zeros([], dtype=FDTYPE)
-        sec  = tf.zeros([], dtype=FDTYPE)
-
-        for ki in range(self.nkernel):
-            s, g  = self.kernels[ki].get_sec_grad(X, Y)
-            grad  = grad + g * self.props[ki]
-            sec   = sec  + s * self.props[ki]
-        return sec, grad
-
-
-    def get_grad(self, X, Y):
-
-        out = tf.zeros([], dtype=FDTYPE)
-
-        for ki in range(self.nkernel):
-            out = out + self.kernels[ki].get_grad(X, Y) * self.props[ki]
-        return out
-
-    def get_grad_gram(self, X, Y):
-
-        grad = tf.zeros([], dtype=FDTYPE)
-        gram = tf.zeros([], dtype=FDTYPE)
-
-        for ki in range(self.nkernel):
-            g, k  = self.kernels[ki].get_grad_gram(X, Y)
-            grad  = grad + g * self.props[ki]
-            gram  = gram + k * self.props[ki]
-        return  grad, gram
-
-    def get_hess(self, X, Y):
-
-        out = tf.zeros([], dtype=FDTYPE)
-        for ki in range(self.nkernel):
-            out = out + self.kernels[ki].get_hess(X, Y) * self.props[ki]
-        return out
-
-    def get_hess_grad(self, X, Y):
-
-        hess = tf.zeros([], dtype=FDTYPE)
-        grad = tf.zeros([], dtype=FDTYPE)
-
-        for ki in range(self.nkernel):
-            h, g  = self.kernels[ki].get_hess_grad(X, Y)
-            hess  = hess + h * self.props[ki]
-            grad  = grad + g * self.props[ki]
-        return  hess, grad
-
-
-    def get_hess_grad_gram(self, X, Y):
-
-        hess = tf.zeros([], dtype=FDTYPE)
-        grad = tf.zeros([], dtype=FDTYPE)
-        gram = tf.zeros([], dtype=FDTYPE)
-
-        for ki in range(self.nkernel):
-            h, g, k  = self.kernels[ki].get_hess_grad_gram(X, Y)
-            hess  = hess + h * self.props[ki]
-            grad  = grad + g * self.props[ki]
-            gram  = gram + k * self.props[ki]
-        return  hess, grad, gram
-
-    def get_weights_norm(self):
-
-        out = tf.zeros([], dtype=FDTYPE)
-
-        for ki in range(self.nkernel):
-            out = out + self.kernels[ki].get_weights_norm()
-        return out
-        
-
-class NetworkKernel(Kernel):
-    
-    def __init__(self, network):
-        
-        self.network = network
-        self.out_size = np.prod(self.network.ndim_out)
-
-    def get_gram_matrix(self, X, Y):
-
-        X = self.network.forward_tensor(X) 
-        Y = self.network.forward_tensor(Y)
-        
-        X = tf.reshape(X, [-1, self.out_size])
-        Y = tf.reshape(Y, [-1, self.out_size])
-        
-        return tf.matmul(X, Y, transpose_b=True)
-
-    def get_sec_grad(self, X, Y):
-
-        X = self.network.forward_tensor(X)
-        d2Y, dY, _, _ = self.network.get_sec_grad_data(Y)
-
-        input_idx = construct_index(self.network.ndim_in)
-
-        X = tf.reshape(X, [-1, self.out_size])
-
-        dY  = tf.reshape(dY,  (self.out_size, -1) + self.network.ndim_in)
-        d2Y = tf.reshape(d2Y, (self.out_size, -1) + self.network.ndim_in)
-        
-        grad = tf.einsum('ij,jk'+input_idx+'->ik' + input_idx, X, dY)
-        sec  = tf.einsum('ij,jk'+input_idx+'->ik' + input_idx, X, d2Y)
-
-        return sec, grad
-
-
-    def get_grad(self, X, Y):
-
-        X = self.network.forward_tensor(X)
-        dY, _, _ = self.network.get_grad_data(Y)
-
-        input_idx = construct_index(self.network.ndim_in)
-
-        X = tf.reshape(X, [-1, self.out_size])
-        dY  = tf.reshape(dY,  (self.out_size, -1) + self.network.ndim_in)
-        
-        grad = tf.einsum('ij,jk'+input_idx+'->ik' + input_idx, X, dY)
-
-        return grad
-
-    def get_hess(self, X, Y):
-
-        X = self.network.forward_tensor(X)
-        d2Y, _, _ = self.network.get_hess_grad_data(Y)
-
-        input_idx = construct_index(self.network.ndim_in, n=2)
-
-        X = tf.reshape(X, [-1, self.out_size])
-        d2Y  = tf.reshape(d2Y,  (self.out_size, -1) + self.network.ndim_in*2)
-        
-        hess = tf.einsum('ij,jk'+input_idx+'->ik' + input_idx, X, d2Y)
-
-        return hess
-
-    def get_hess_grad(self, X, Y):
-
-        X = self.network.forward_tensor(X)
-        d2Y, dY, _ = self.network.get_hess_grad_data(Y)
-
-        input_idx_1 = construct_index(self.network.ndim_in, n=1)
-        input_idx_2 = construct_index(self.network.ndim_in, n=2)
-
-        X = tf.reshape(X, [-1, self.out_size])
-        dY  = tf.reshape(dY,  (self.out_size, -1) + self.network.ndim_in)
-        d2Y  = tf.reshape(d2Y,  (self.out_size, -1) + self.network.ndim_in*2)
-        
-        grad = tf.einsum('ij,jk'+input_idx_1+'->ik' + input_idx_1, X, d2Y)
-        hess = tf.einsum('ij,jk'+input_idx_2+'->ik' + input_idx_2, X, d2Y)
-
-        return hess, grad
-
-    def get_weights_norm(self):
-        return self.network.get_weights_norm()
-
