@@ -45,8 +45,8 @@ def run_batches(m, op_names, n, q_std=None, le_cutoff=None, batch_size=10**6,
     for sz in (pbar(sizes, **pbar_args) if pbar else sizes):
         fd[m.nodes['n_rand']] = sz
         res.append(m.sess.run(ops, feed_dict=fd))
-        if not allow_inf:
-            assert np.all(np.isfinite(res[-1]))
+        if not allow_inf and not np.all(np.isfinite(res[-1])):
+            raise ValueError("non-finite values")
     return np.asarray(res)
 
 
@@ -101,7 +101,8 @@ def estimate_bias(model, n_pct=10**6, n_hoeffding=10**7,
     p_hat = est_cdf(model, log_s, n_hoeffding,
                     pbar_args=dict(desc="2. hoeffding "), **batch_kw)
     rho = p_hat + np.sqrt(-np.log(hoeffding_delta) / (2 * n_hoeffding))
-    assert rho < .5, "!!!: {}, {}".format(rho, p_hat)
+    if rho >= .5:
+        raise ValueError("bad rho!!!: rho {}, p_hat {}".format(rho, p_hat))
 
     # estimate the variance
     log_Z_for_var, log_var_1 = est_mean(
@@ -123,7 +124,8 @@ def estimate_bias(model, n_pct=10**6, n_hoeffding=10**7,
     log_t = logsumexp([log_a, log_s]) - np.log(2)
 
     # Note that psi(a, Z) > psi(t, Z) as long as t < Z
-    assert log_t < log_Z
+    if log_t >= log_Z:
+        raise ValueError("t is too big...{} vs {}".format(log_t, log_Z))
 
     # first term, except for num_bias:
     t_over_Z = np.exp(log_t - log_Z)
@@ -222,14 +224,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--dsets', nargs='+')
     parser.add_argument('--seeds', nargs='+', default=range(15), type=int)
-    parser.add_argument('--n-psi', type=int, default=10**8)
-    parser.add_argument('--n-var', type=int, default=10**8)
+    parser.add_argument('--n-psi', type=int, default=10**9)
+    parser.add_argument('--n-var', type=int, default=10**9)
     parser.add_argument('--n-pct', type=int, default=10**7)
     parser.add_argument('--n-hoeffding', type=int, default=10**7)
     parser.add_argument('--hoeffding-delta', type=int, default=.001)
     parser.add_argument('--percentile', type=float, default=40)
     parser.add_argument('--batch-size', type=int, default=10**6)
-    parser.add_argument('--bias-seed-offset', type=int, default=17)
+    parser.add_argument('--bias-seed-offset', type=int, default=179)
     parser.add_argument('--pbar', action='store_true', default=False)
 
     parser.add_argument('--gpu-count', default=0, type=int)
@@ -252,12 +254,9 @@ def main():
                 res = compute_for(dset, seed, **kwargs)
                 if 'in_progress' in res:
                     raise ValueError()
-            except ValueError:
-                tqdm.write("WARNING: {}/{} says it's in progress; did it crash?"
-                           .format(dset, seed))
-            except AssertionError:
-                tqdm.write("{}/{}: got nans/infs. Leaving as 'in progress'"
-                           .format(dset, seed))
+            except ValueError as e:
+                tqdm.write("{}/{}: error {}, leaving 'in progress'"
+                           .format(dset, seed, e))
 
 
 if __name__ == '__main__':

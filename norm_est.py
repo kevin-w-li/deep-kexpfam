@@ -63,8 +63,8 @@ def main():
         for seed in maybe_tqdm(args.seeds):
             try:
                 compute_for(dset, seed, pbar=tqdm, **kwargs)
-            except AssertionError:
-                tqdm.write("Bad model: {}/{}".format(dset, seed))
+            except ValueError as e:
+                tqdm.write("Bad model: {}/{}: {}".format(dset, seed, e))
 
 
 if __name__ == '__main__':
