@@ -759,7 +759,7 @@ class DeepLite(object):
         
     def default_file_name(self):
 
-        file_name = "%s_D%02d_l%d_nd%d_np%d_nt%d_nv%d_pt%s_ss%d_ni%d_n%02d_k%d_m%d_b%d_p%d_nk%d_cl%d_cu%d_q1" % \
+        file_name = "%s_D%02d_l%d_nd%d_np%d_nt%d_nv%d_pt%s_ss%d_ni%d_n%02d_k%d_m%d_b%d_p%d_nk%d_cl%d_cu%d" % \
             (self.target.name[0], self.target.D, self.model_params["nlayer"], 
              np.prod(self.model_params["ndims"][0]), 
              self.model_params["npoint"], self.train_params["ntrain"], 

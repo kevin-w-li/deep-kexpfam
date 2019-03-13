@@ -322,13 +322,19 @@ class LiteModel:
     def evaluate_gram(self, X, Y):
         return self.kernel.get_gram_matrix(X, Y)
 
-    def evaluate_fun(self, data, alpha=None):
+    def evaluate_kernel_fun(self, data, alpha=None):
 
         if alpha is None:
             alpha = self.alpha
         gram = self.kernel.get_gram_matrix(self.X, data)
         
         fv = tf.tensordot(alpha, gram, [[0],[0]])
+
+        return fv
+        
+    def evaluate_fun(self, data, alpha=None):
+        
+        fv = self.evaluate_kernel_fun(data, alpha)
 
         if self.base:
             fv = fv + self.base.get_fun(data)
