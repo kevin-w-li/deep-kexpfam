@@ -420,6 +420,7 @@ class DeepLite(object):
             self.nodes["q_lse_2logr"] = tf.reduce_logsumexp(2 * self.nodes["q_logr"])
             self.nodes["q_logr_le"] = tf.count_nonzero(self.nodes["q_logr"] <= le_cutoff)
 
+            self.nodes['q0_lognorm'] = kn.base.measures[0].get_log_normaliser()
             self.nodes["q_logr_lowerbound"] = (
                 tf.reduce_sum(tf.minimum(self.alpha, 0))
                 - kn.base.measures[0].get_log_normaliser())
