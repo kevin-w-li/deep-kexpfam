@@ -5,15 +5,18 @@ import os
 from bias_est import est_mean, load_model
 
 import numpy as np
+import tensorflow as tf
 from tqdm import tqdm
 
 
 def compute_for(dset, seed, n=10**8, est_seed_offset=None, base_dir=None,
-                gpu_count=0, cpu_count=None, batch_size=10**6, pbar=None):
+                gpu_count=0, cpu_count=None, batch_size=10**6, pbar=None,
+                nlayer=None):
     if base_dir is None:
         base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 'norms')
-    pth = os.path.join(base_dir, '{}/{}.txt'.format(dset, seed))
+    pth = os.path.join(base_dir, '{}/{}{}.txt'.format(
+        dset, seed, '_{}'.format(nlayer) if nlayer is not None else ''))
     if os.path.exists(pth):
         log_Z, n_already = np.loadtxt(pth)
         if n_already != n:
@@ -29,7 +32,7 @@ def compute_for(dset, seed, n=10**8, est_seed_offset=None, base_dir=None,
             else:
                 raise
 
-    model, p = load_model(dset, seed, gpu_count, cpu_count)
+    model, p = load_model(dset, seed, gpu_count, cpu_count, nlayer=nlayer)
     if est_seed_offset is not None:
         np.random.seed(seed + est_seed_offset)
     log_Z = est_mean(model, n=n, batch_size=batch_size, pbar=pbar)
@@ -50,6 +53,7 @@ def main():
     parser.add_argument('--gpu-count', default=0, type=int)
     parser.add_argument('--cpu-count', default=None, type=int)
     parser.add_argument('--base-dir', type=os.path.abspath)
+    parser.add_argument('--nlayer', default=None, type=int)
     args = parser.parse_args()
 
     kwargs = vars(args).copy()
@@ -65,6 +69,8 @@ def main():
                 compute_for(dset, seed, pbar=tqdm, **kwargs)
             except ValueError as e:
                 tqdm.write("Bad model: {}/{}: {}".format(dset, seed, e))
+            except tf.errors.NotFoundError as e:
+                tqdm.write("{}/{} not found: {}".format(dset, seed, e))
 
 
 if __name__ == '__main__':

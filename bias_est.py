@@ -39,7 +39,7 @@ def run_batches(m, op_names, n, q_std=None, le_cutoff=None, batch_size=10**6,
         ops = [m.nodes['q_' + name] for name in op_names]
     else:
         ops = [m.nodes[name] for name in op_names]
-        fd['q_std'] = q_std
+        fd[m.nodes['q_std']] = q_std
 
     res = []
     for sz in (pbar(sizes, **pbar_args) if pbar else sizes):
@@ -87,13 +87,17 @@ def est_cdf(m, x, n, q_std=None, **batch_kwargs):
 
 def estimate_bias(model, n_pct=10**6, n_hoeffding=10**7,
                   percentile=40, hoeffding_delta=.001,
-                  n_var=10**7, n_psi=10**7, **batch_kw):
+                  n_var=10**7, n_psi=10**7, percentile_eps=.001,
+                  **batch_kw):
     # find the probability-1 lower bound, a
     log_a = model.sess.run(model.nodes['q_logr_lowerbound'])
 
     # find the point s at the 40th percentile
     log_s = est_log_percentile(model, percentile, n_pct,
                                pbar_args=dict(desc="1. percentile"), **batch_kw)
+    # go down a tiny bit to avoid the thing where we have a huge chunk of
+    # dentical ratios from <40th percentile to >50th
+    log_s -= percentile_eps
 
     # get Hoeffding bound on cdf at s:
     #   Pr(\sum 1(X <= x) - E[1(X <= x)] > eps) <= exp(- 2 n eps^2) = delta
@@ -199,10 +203,13 @@ def compute_for(dset, seed, gpu_count=0, cpu_count=None,
     return res
 
 
-def load_model(dset, seed, gpu_count=0, cpu_count=None):
+def load_model(dset, seed, gpu_count=0, cpu_count=None, nlayer=None):
+    args = dl_args.copy()
+    if nlayer is not None:
+        args['nlayer'] = nlayer
     p = load_data(dset, seed=seed, itanh=False, whiten=True)
     model = DeepLite(p, seed=seed, gpu_count=gpu_count, cpu_count=cpu_count,
-                     **dl_args)
+                     **args)
     model.load()
 
     return model, p
