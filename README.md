@@ -10,5 +10,6 @@ This repo has the code for the paper:
 To install and run 
 1. clone the repo
 2. inside the repo run `pip install -r requirements.txt`
+3. usage is in `training_demo.ipynb` notebook
 
 The code uses TensorFlow 1.4, with CUDA 8.0 and cuDNN 6.0
