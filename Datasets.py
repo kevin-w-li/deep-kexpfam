@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.special import logsumexp
 from scipy.integrate import quad
-from scipy.stats import norm
+from scipy.stats import norm, multivariate_normal as mvn
 from multiprocessing import Pool
 from nystrom_kexpfam.density import rings_log_pdf_grad, rings_sample, rings_log_pdf
 from nystrom_kexpfam.data_generators.Gaussian import GaussianGrid
@@ -567,6 +567,8 @@ class RealDataset(Dataset):
         self.nkde=nkde
         if nkde:
             self.kde_logp, self.valid_kde_logp = self.fit_kde(nkde)
+            
+        self._mvn_fit()
     
     def fit_kde(self, ntrain):
 
@@ -682,6 +684,23 @@ class RealDataset(Dataset):
             data = (data - self.mean).dot(self.W)
 
         return data
+        
+    def _mvn_fit(self):
+        self.mvn_m = self.data.mean(0)
+        self.mvn_c = np.cov(self.data.T)
+        
+    def mvn_loglik(self, x=None):
+        m, c = self.mvn_m, self.mvn_c 
+        if x is None:
+            x = self.test_data
+        return mvn.logpdf(x, mean = m, cov= c)
+    
+    def mvn_score(self, x=None):
+        m, c = self.mvn_m, self.mvn_c 
+        if x is None:
+            x = self.test_data
+        return 0.5*np.sum(np.linalg.solve(c, (self.test_data-m).T)**2, 0) - np.trace(np.linalg.inv(c))
+        
 
 class WhiteWine(RealDataset):
     

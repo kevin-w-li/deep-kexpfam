@@ -125,8 +125,8 @@ class DeepLite(object):
                     npoint=300, ntrain=100, nvalid=100, nbatch=1,points_type="opt", clip_score=False,
                     step_size=1e-3, niter=10000, patience=200, kernel_type="gaussian",
                     final_step_size = 1e-3, final_ntrain=200, final_nvalid=200, final_niter=1000,
-                    gpu_count=1, cpu_count=None, fn_ext = "", train_stage = 0, nl_type = "linear", add_skip=True, curve_penalty=True,
-                    ):
+                    gpu_count=1, cpu_count=None, fn_ext = "", train_stage = 0, nl_type = None, add_skip=True, curve_penalty=True,
+                    train_base=True):
         
         self.target = target
 
@@ -148,6 +148,7 @@ class DeepLite(object):
                                     npoint = npoint,
                                     mixture_kernel = mixture_kernel,
                                     base           = base,
+                                    train_base     = train_base,
                                     kernel_type    = kernel_type,
                                     nl_type       = nl_type,
                                     add_skip       = add_skip
@@ -759,7 +760,7 @@ class DeepLite(object):
         
     def default_file_name(self):
 
-        file_name = "%s_D%02d_l%d_nd%d_np%d_nt%d_nv%d_pt%s_ss%d_ni%d_n%02d_k%d_m%d_b%d_p%d_nk%d_cl%d_cu%d" % \
+        file_name = "%s_D%02d_l%d_nd%d_np%d_nt%d_nv%d_pt%s_ss%d_ni%d_n%02d_k%d_m%d_b%d_p%d_nk%d_cl%d_cu%d_q%d" % \
             (self.target.name[0], self.target.D, self.model_params["nlayer"], 
              np.prod(self.model_params["ndims"][0]), 
              self.model_params["npoint"], self.train_params["ntrain"], 
@@ -773,7 +774,8 @@ class DeepLite(object):
              self.train_params["patience"],
              len(self.model_params["init_log_sigma"]),
              self.train_params["clip_score"],
-             self.train_params["curve_penalty"])
+             self.train_params["curve_penalty"],
+             self.model_params["train_base"])
 
         if self.model_params["kernel_type"] == "linear":
             file_name += "_lin"
