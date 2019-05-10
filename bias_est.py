@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 from __future__ import division
+import ast
 import os
 
 import logging
@@ -11,7 +12,7 @@ import tensorflow as tf
 from tqdm import tqdm
 
 from Datasets import load_data
-from LiteModels import DeepLite
+from DKEFModels import DeepLite
 
 
 dl_args = dict(
@@ -169,12 +170,13 @@ def estimate_bias(model, n_pct=10**6, n_hoeffding=10**7,
 
 def compute_for(dset, seed, gpu_count=0, cpu_count=None,
                 bias_seed_offset=None, load_only=False,
-                base_dir=None, **kwargs):
+                base_dir=None, load_args={}, **kwargs):
     if base_dir is None:
         base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 'bias')
 
-    pth = os.path.join(base_dir, '{}/{}.npz'.format(dset, seed))
+    s = ''.join('-{}_{}'.format(k, v) for k, v in sorted(load_args.items()))
+    pth = os.path.join(base_dir, dset, '{}{}.npz'.format(seed, s))
     if os.path.exists(pth):
         res = dict(**np.load(pth))
         if 'in_progress' in res:
@@ -193,7 +195,7 @@ def compute_for(dset, seed, gpu_count=0, cpu_count=None,
                 raise
     np.savez(pth, in_progress=True)
 
-    model, p = load_model(dset, seed, gpu_count, cpu_count)
+    model, p = load_model(dset, seed, gpu_count, cpu_count, **load_args)
     if bias_seed_offset is not None:
         np.random.seed(seed + bias_seed_offset)
         with model.sess.graph.as_default():
@@ -203,10 +205,9 @@ def compute_for(dset, seed, gpu_count=0, cpu_count=None,
     return res
 
 
-def load_model(dset, seed, gpu_count=0, cpu_count=None, nlayer=None):
+def load_model(dset, seed, gpu_count=0, cpu_count=None, **kwargs):
     args = dl_args.copy()
-    if nlayer is not None:
-        args['nlayer'] = nlayer
+    args.update(kwargs)
     p = load_data(dset, seed=seed, itanh=False, whiten=True)
     model = DeepLite(p, seed=seed, gpu_count=gpu_count, cpu_count=cpu_count,
                      **args)
@@ -244,6 +245,7 @@ def main():
     parser.add_argument('--gpu-count', default=0, type=int)
     parser.add_argument('--cpu-count', default=None, type=int)
     parser.add_argument('--base-dir', type=os.path.abspath)
+    parser.add_argument('--load-args', default={}, type=ast.literal_eval)
     args = parser.parse_args()
 
     kwargs = vars(args).copy()
