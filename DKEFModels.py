@@ -408,7 +408,13 @@ class DeepLite(object):
             assert len(kn.base.measures) == 1
             q_sample, q_logq = kn.base.measures[0].sample_logq(n_rand)
             q_rand_fv = kn.evaluate_fun(q_sample, alpha=self.alpha)
-
+            q_rand_kfv = kn.evaluate_kernel_fun(q_sample, alpha=self.alpha)
+            
+            self.nodes["q_sample"] = q_sample
+            self.nodes["q_logq"] = q_logq
+            self.nodes["q_rand_fv"]= q_rand_fv
+            self.nodes["q_rand_kfv"]= q_rand_kfv
+            
             self.nodes["q_logr"] = q_rand_fv - q_logq
             self.nodes["q_lse_logr"] = tf.reduce_logsumexp(self.nodes["q_logr"])
             self.nodes["q_lse_2logr"] = tf.reduce_logsumexp(2 * self.nodes["q_logr"])
@@ -754,7 +760,7 @@ class DeepLite(object):
         
     def default_file_name(self):
 
-        file_name = "%s_D%02d_l%d_nd%d_np%d_nt%d_nv%d_pt%s_ss%d_ni%d_n%02d_k%d_m%d_b%d_p%d_nk%d_cl%d_cu%d_q1" % \
+        file_name = "%s_D%02d_l%d_nd%d_np%d_nt%d_nv%d_pt%s_ss%d_ni%d_n%02d_k%d_m%d_b%d_p%d_nk%d_cl%d_cu%d" % \
             (self.target.name[0], self.target.D, self.model_params["nlayer"], 
              np.prod(self.model_params["ndims"][0]), 
              self.model_params["npoint"], self.train_params["ntrain"], 

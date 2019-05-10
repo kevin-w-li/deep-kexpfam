@@ -1,7 +1,8 @@
 import os
 import numpy as np
 from maf.util import load
-from DKEFModels import DeepLite
+#from DKEFModels import DeepLite
+from LiteModels import DeepLite
 import h5py as h5
 from Datasets import load_data
 
@@ -37,7 +38,7 @@ def create_model_id(data_name, model_name, mode, n_hiddens, act_fun, n_comps, se
     return id
 
 
-def load_all_models(data_name, seed, dl_args, others_args, skip_theano=False):
+def load_all_models(data_name, seed, dl_args, others_args, skip_theano=False, load_l0=True):
 
     p = load_data(data_name, seed=seed, itanh=False, whiten=True)
 
@@ -51,10 +52,17 @@ def load_all_models(data_name, seed, dl_args, others_args, skip_theano=False):
     n_layers = others_args["n_layers"]
     act_fun = others_args["act_fun"]
     mode =  others_args["mode"]
-
+    
+    dl_args["nlayer"] = 0
+    dl_model = DeepLite(p, seed=seed, **dl_args)
+    dl_model.load()
+    models["kef"] = dl_model
+    
+    dl_args["nlayer"] = 3
     dl_model = DeepLite(p, seed=seed, **dl_args)
     dl_model.load()
     models["dkef"] = dl_model
+    
 
     fn = "results/train_sample/%s.h5" %dl_model.default_file_name()
 
@@ -69,7 +77,7 @@ def load_all_models(data_name, seed, dl_args, others_args, skip_theano=False):
     model_fn = create_model_id(data_name, "made", mode, n_hiddens, act_fun, None, seed=seed)
     model_fn = "maf_models/%s/%s.pkl" % (p.name.lower(), model_fn)
     models["made"] = load(model_fn)
-
+    
     fn = "data/made/%s_D%02d_n%d_nn%d_nt200_p200_made_samples_s%02d.h5" % (p.name, p.D, p.noise_std*100, n_hiddens[0], seed)
     if os.path.isfile(fn):
         with h5.File(fn,'r') as f:
