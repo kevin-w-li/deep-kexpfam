@@ -1,8 +1,8 @@
 import os
 import numpy as np
 from maf.util import load
-#from DKEFModels import DeepLite
-from LiteModels import DeepLite
+from DKEFModels import DeepLite
+#from LiteModels import DeepLite
 import h5py as h5
 from Datasets import load_data
 
@@ -38,7 +38,7 @@ def create_model_id(data_name, model_name, mode, n_hiddens, act_fun, n_comps, se
     return id
 
 
-def load_all_models(data_name, seed, dl_args, others_args, skip_theano=False, load_l0=True):
+def load_all_models(data_name, seed, dl_args, others_args, skip_dkef=False, skip_theano=False):
 
     p = load_data(data_name, seed=seed, itanh=False, whiten=True)
 
@@ -53,23 +53,24 @@ def load_all_models(data_name, seed, dl_args, others_args, skip_theano=False, lo
     act_fun = others_args["act_fun"]
     mode =  others_args["mode"]
     
-    dl_args["nlayer"] = 0
-    dl_model = DeepLite(p, seed=seed, **dl_args)
-    dl_model.load()
-    models["kef"] = dl_model
-    
-    dl_args["nlayer"] = 3
-    dl_model = DeepLite(p, seed=seed, **dl_args)
-    dl_model.load()
-    models["dkef"] = dl_model
+    if not skip_dkef:
+        dl_args["nlayer"] = 0
+        dl_model = DeepLite(p, seed=seed, **dl_args)
+        dl_model.load()
+        models["kef"] = dl_model
+        
+        dl_args["nlayer"] = 3
+        dl_model = DeepLite(p, seed=seed, **dl_args)
+        dl_model.load()
+        models["dkef"] = dl_model
     
 
-    fn = "results/train_sample/%s.h5" %dl_model.default_file_name()
+        fn = "results/train_sample/%s.h5" %dl_model.default_file_name()
 
-    if os.path.isfile(fn):
-        with h5.File(fn,'r') as f:
-            assert np.allclose(f["idx"].value,  p.idx)
-            loglik["dkef"] = f["loglik_clean"].value
+        if os.path.isfile(fn):
+            with h5.File(fn,'r') as f:
+                assert np.allclose(f["idx"].value,  p.idx)
+                loglik["dkef"] = f["loglik_clean"].value
 
     if skip_theano:
         return p, models, loglik, samples
