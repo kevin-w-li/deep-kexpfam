@@ -700,7 +700,11 @@ class RealDataset(Dataset):
         if x is None:
             x = self.test_data
         return 0.5*np.sum(np.linalg.solve(c, (self.test_data-m).T)**2, 0) - np.trace(np.linalg.inv(c))
-        
+
+    def mvn_grad(self, x):
+        m, c = self.mvn_m, self.mvn_c 
+        return -np.linalg.solve(c, (x-m).T).T
+
 
 class WhiteWine(RealDataset):
     

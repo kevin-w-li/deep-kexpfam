@@ -1,6 +1,5 @@
 import os
 import numpy as np
-from maf.util import load
 from DKEFModels import DeepLite
 #from LiteModels import DeepLite
 import h5py as h5
@@ -74,7 +73,8 @@ def load_all_models(data_name, seed, dl_args, others_args, skip_dkef=False, skip
 
     if skip_theano:
         return p, models, loglik, samples
-
+    
+    from maf.util import load
     model_fn = create_model_id(data_name, "made", mode, n_hiddens, act_fun, None, seed=seed)
     model_fn = "maf_models/%s/%s.pkl" % (p.name.lower(), model_fn)
     models["made"] = load(model_fn)
